@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Source Serif 4", ui-serif, Georgia, serif;
+  --color-ink: #10233d;
+  --color-navy: #16345c;
+  --color-paper: #f4f1ea;
+  --color-sand: #e8e1d4;
+  --color-accent: #c45c26;
+  --color-teal: #1f6f6a;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #f4f1ea;
+  color: #10233d;
+  font-family: var(--font-sans);
+}
+
+input,
+select,
+textarea,
+button {
+  font-family: inherit;
+}
