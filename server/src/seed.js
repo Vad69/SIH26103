@@ -123,6 +123,7 @@ export function seedIfEmpty() {
   insertTask.run(p1, m1b, "Lock enumerator attendance protocol", "Daily check-in so missing field days surface as delay risk.", ids["member@mospi.gov.in"], "2026-05-01", "todo", "critical", 0);
   insertTask.run(p1, m1c, "Supervisor exception reports", "Overdue listing and non-response flags.", ids["sneha@mospi.gov.in"], "2026-07-15", "todo", "high", 5);
   insertTask.run(p1, m1c, "Role-based access for field staff", "PM / supervisor / enumerator roles.", ids["member@mospi.gov.in"], "2026-08-20", "todo", "medium", 0);
+  insertTask.run(p1, m1c, "State weekly delay digest", "Email supervisors a 7-day overdue list.", ids["sneha@mospi.gov.in"], "2026-09-08", "todo", "high", 15);
 
   const m2a = insertMilestone.run(p2, "Source system inventory", "2026-01-15", "completed").lastInsertRowid;
   const m2b = insertMilestone.run(p2, "Quality-gate engine live", "2026-04-01", "in_progress").lastInsertRowid;

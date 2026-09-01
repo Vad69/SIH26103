@@ -25,6 +25,10 @@ function parseId(value) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+function isISODate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value)) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+}
+
 function projectOr404(id, res) {
   const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(id);
   if (!row) {
@@ -157,6 +161,12 @@ app.post("/api/projects", authRequired, requireRole("admin", "project_manager"),
   if (!name || !start_date || !end_date) {
     return res.status(400).json({ error: "Name, start date, and end date are required." });
   }
+  if (!isISODate(start_date) || !isISODate(end_date)) {
+    return res.status(400).json({ error: "Dates must use YYYY-MM-DD." });
+  }
+  if (end_date < start_date) {
+    return res.status(400).json({ error: "End date must be on or after the start date." });
+  }
   let managerId = req.user.id;
   if (req.user.role === "admin" && req.body?.manager_id) {
     managerId = Number(req.body.manager_id);
@@ -199,10 +209,27 @@ app.put("/api/projects/:id", authRequired, (req, res) => {
   const start_date = String(req.body?.start_date ?? row.start_date);
   const end_date = String(req.body?.end_date ?? row.end_date);
   const status = String(req.body?.status ?? row.status);
+  if (!isISODate(start_date) || !isISODate(end_date)) {
+    return res.status(400).json({ error: "Dates must use YYYY-MM-DD." });
+  }
   db.prepare(
     `UPDATE projects SET name = ?, description = ?, start_date = ?, end_date = ?, status = ? WHERE id = ?`
   ).run(name, description, start_date, end_date, status, id);
   res.json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)));
+});
+
+app.delete("/api/projects/:id", authRequired, (req, res) => {
+  const id = parseId(req.params.id);
+  const row = projectOr404(id, res);
+  if (!row) return;
+  if (!canManageProject(req.user, id)) {
+    return res.status(403).json({ error: "Only the manager or an admin can delete this project." });
+  }
+  db.prepare("DELETE FROM tasks WHERE project_id = ?").run(id);
+  db.prepare("DELETE FROM milestones WHERE project_id = ?").run(id);
+  db.prepare("DELETE FROM project_members WHERE project_id = ?").run(id);
+  db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+  res.json({ ok: true });
 });
 
 app.post("/api/projects/:id/members", authRequired, (req, res) => {
@@ -239,6 +266,7 @@ app.post("/api/projects/:id/milestones", authRequired, (req, res) => {
   const due_date = String(req.body?.due_date || "");
   const status = req.body?.status || "pending";
   if (!title || !due_date) return res.status(400).json({ error: "Title and due date are required." });
+  if (!isISODate(due_date)) return res.status(400).json({ error: "Dates must use YYYY-MM-DD." });
   db.prepare("INSERT INTO milestones (project_id, title, due_date, status) VALUES (?, ?, ?, ?)").run(
     id,
     title,
@@ -272,6 +300,7 @@ app.post("/api/projects/:id/tasks", authRequired, (req, res) => {
   const title = String(req.body?.title || "").trim();
   const due_date = String(req.body?.due_date || "");
   if (!title || !due_date) return res.status(400).json({ error: "Title and due date are required." });
+  if (!isISODate(due_date)) return res.status(400).json({ error: "Dates must use YYYY-MM-DD." });
   db.prepare(
     `INSERT INTO tasks (project_id, milestone_id, title, description, assignee_id, due_date, status, priority, progress)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`

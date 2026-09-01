@@ -64,10 +64,10 @@ export default function Projects() {
               </select>
             </Field>
             <Field label="Start date">
-              <input type="date" className={inputClass} value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} required />
+              <input type="date" className={inputClass} value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} required min="2000-01-01" max="2100-12-31" />
             </Field>
             <Field label="End date">
-              <input type="date" className={inputClass} value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} required />
+              <input type="date" className={inputClass} value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} required min="2000-01-01" max="2100-12-31" />
             </Field>
             <div className="md:col-span-2">
               <Field label="Description">
