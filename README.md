@@ -19,18 +19,34 @@ The “intelligent” piece is a small, explainable check — for example *“Pr
 
 - Frontend: React + Vite + Tailwind CSS + Chart.js
 - Backend: Node.js + Express + JWT
-- Database: SQLite (`server/data/monitor.db`)
+- Database: SQLite via Node’s built-in `node:sqlite` (`server/data/monitor.db`) — no Python, Visual Studio, or `node-gyp`
 
-## Run locally
+## Requirements
 
-```bash
+- Node.js **22.13+** (Node 24 is fine)
+- npm 10+
+
+Do **not** run `npm install all`. That tries to install a package named `all`. The script you want is `npm run install:all`.
+
+## Run locally (Windows / macOS / Linux)
+
+From the repo root:
+
+```bat
+npm uninstall all
+rmdir /s /q server\node_modules
+rmdir /s /q client\node_modules
 npm install
 npm run install:all
 npm run dev
 ```
 
+On macOS/Linux, replace the `rmdir` lines with `rm -rf server/node_modules client/node_modules`.
+
 - App: http://localhost:5173
 - API: http://localhost:3001
+
+If a previous install left files locked on Windows (`EPERM`), close other terminals/IDEs using this folder, delete `server\node_modules`, then run `npm run install:all` again.
 
 ## Demo accounts
 
