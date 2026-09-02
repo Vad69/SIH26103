@@ -1,15 +1,43 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.join(__dirname, "..", "data");
 fs.mkdirSync(dataDir, { recursive: true });
 
-const db = new Database(path.join(dataDir, "monitor.db"));
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+const raw = new DatabaseSync(path.join(dataDir, "monitor.db"));
+raw.exec("PRAGMA journal_mode = WAL");
+raw.exec("PRAGMA foreign_keys = ON");
+
+function asPlain(row) {
+  return row ? { ...row } : undefined;
+}
+
+const db = {
+  exec(sql) {
+    return raw.exec(sql);
+  },
+  prepare(sql) {
+    const stmt = raw.prepare(sql);
+    return {
+      run(...args) {
+        const info = stmt.run(...args);
+        return {
+          lastInsertRowid: Number(info.lastInsertRowid),
+          changes: Number(info.changes),
+        };
+      },
+      get(...args) {
+        return asPlain(stmt.get(...args));
+      },
+      all(...args) {
+        return stmt.all(...args).map(asPlain);
+      },
+    };
+  },
+};
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
