@@ -1,3 +1,5 @@
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import express from "express";
 import cors from "cors";
 import bcrypt from "bcryptjs";
@@ -17,6 +19,7 @@ import { assertCanDeleteUser, normalizeCreatableRole } from "./rbac.js";
 import { DELAY_REASONS, MINISTRIES, SECTORS, STATES, delayLabel } from "./constants.js";
 import { logAudit, listAudit } from "./audit.js";
 import { parseCsv, toCsv } from "./csv.js";
+import { validateProjectNumbers } from "./validate.js";
 
 seedIfEmpty();
 
@@ -49,6 +52,26 @@ function intel(project) {
     milestones: project.milestones || [],
     issues: project.issues || [],
   });
+}
+
+const HEALTH_RANK = { on_track: 0, watch: 1, at_risk: 2, critical: 3 };
+
+function recordHealth(projectId, insights) {
+  const row = db.prepare("SELECT health_band FROM projects WHERE id = ?").get(projectId);
+  if (row?.health_band && row.health_band !== insights.health.band) {
+    db.prepare("UPDATE projects SET previous_health_band = ?, health_band = ?, health_score = ? WHERE id = ?").run(
+      row.health_band,
+      insights.health.band,
+      insights.health.score,
+      projectId
+    );
+  } else {
+    db.prepare("UPDATE projects SET health_band = ?, health_score = ? WHERE id = ?").run(
+      insights.health.band,
+      insights.health.score,
+      projectId
+    );
+  }
 }
 
 function loadVisible(user) {
@@ -87,6 +110,11 @@ function projectWriteFields(body, existing = {}) {
     revised_end_date: String(body.revised_end_date ?? existing.revised_end_date ?? end),
     delay_reason: String(body.delay_reason ?? existing.delay_reason ?? ""),
     delay_notes: String(body.delay_notes ?? existing.delay_notes ?? ""),
+    reported_physical_progress:
+      body.reported_physical_progress === undefined || body.reported_physical_progress === ""
+        ? existing.reported_physical_progress ?? null
+        : Number(body.reported_physical_progress),
+    data_source: existing.data_source || "manual",
   };
 }
 
@@ -126,6 +154,13 @@ app.post("/api/users", authRequired, requireRole("admin"), (req, res) => {
       .prepare("INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)")
       .run(name, email, bcrypt.hashSync(password, 10), parsed.role);
     const user = db.prepare("SELECT id, name, email, role FROM users WHERE id = ?").get(info.lastInsertRowid);
+    logAudit(req.user, {
+      action: "created user",
+      entity: "user",
+      entityId: user.id,
+      detail: `${req.user.name} created ${user.name} with role ${user.role}.`,
+      next: user.role,
+    });
     res.status(201).json(user);
   } catch (err) {
     const message = String(err?.message || err);
@@ -150,6 +185,13 @@ app.delete("/api/users/:id", authRequired, requireRole("admin"), (req, res) => {
   db.prepare("DELETE FROM project_members WHERE user_id = ?").run(id);
   db.prepare("UPDATE tasks SET assignee_id = NULL WHERE assignee_id = ?").run(id);
   db.prepare("DELETE FROM users WHERE id = ?").run(id);
+  logAudit(req.user, {
+    action: "deleted user",
+    entity: "user",
+    entityId: id,
+    detail: `${req.user.name} removed ${target.name} (${target.role}). Team memberships and task assignments were cleared.`,
+    previous: target.role,
+  });
   res.json({ ok: true });
 });
 
@@ -220,12 +262,13 @@ app.get("/api/dashboard", authRequired, (req, res) => {
     .map(([id, count]) => ({ id, label: delayLabel(id), count }))
     .sort((a, b) => b.count - a.count);
 
-  const issuesOpen = db.prepare("SELECT COUNT(*) AS n FROM issues WHERE status != 'resolved'").get().n;
-  const issuesCritical = db.prepare("SELECT COUNT(*) AS n FROM issues WHERE status != 'resolved' AND severity = 'critical'").get().n;
-  const issuesOverdue = db
-    .prepare("SELECT COUNT(*) AS n FROM issues WHERE status != 'resolved' AND due_date IS NOT NULL AND due_date < ?")
-    .get(todayISO()).n;
-  const issuesResolved = db.prepare("SELECT COUNT(*) AS n FROM issues WHERE status = 'resolved'").get().n;
+  const visibleIssues = projects.flatMap((p) => p.issues || []);
+  const issuesOpen = visibleIssues.filter((i) => i.status !== "resolved").length;
+  const issuesCritical = visibleIssues.filter((i) => i.status !== "resolved" && i.severity === "critical").length;
+  const issuesOverdue = visibleIssues.filter(
+    (i) => i.status !== "resolved" && i.due_date && i.due_date < todayISO()
+  ).length;
+  const issuesResolved = visibleIssues.filter((i) => i.status === "resolved").length;
 
   res.json({
     stats: {
@@ -271,6 +314,10 @@ app.get("/api/dashboard", authRequired, (req, res) => {
       state: p.state,
       health: p.insights.health,
       finance: p.insights.finance,
+      data_source: p.data_source || "manual",
+      calculated_progress: p.insights.calculated_progress,
+      reported_physical_progress: p.insights.reported_physical_progress,
+      progress_method: p.insights.progress_method,
     })),
   });
 });
@@ -299,6 +346,9 @@ app.get("/api/projects", authRequired, (req, res) => {
       revised_cost: p.revised_cost,
       health: p.insights.health,
       finance: p.insights.finance,
+      data_source: p.data_source || "manual",
+      calculated_progress: p.progress,
+      reported_physical_progress: p.reported_physical_progress,
     }))
   );
 });
@@ -314,6 +364,14 @@ app.post("/api/projects", authRequired, requireRole("admin", "project_manager"),
   if (fields.end_date < fields.start_date) {
     return res.status(400).json({ error: "End date must be on or after the start date." });
   }
+  if (
+    (fields.original_end_date && !isISODate(fields.original_end_date)) ||
+    (fields.revised_end_date && !isISODate(fields.revised_end_date))
+  ) {
+    return res.status(400).json({ error: "Dates must use YYYY-MM-DD." });
+  }
+  const financeError = validateProjectNumbers(fields);
+  if (financeError) return res.status(400).json({ error: financeError });
   let managerId = req.user.id;
   if (req.user.role === "admin" && req.body?.manager_id) {
     managerId = Number(req.body.manager_id);
@@ -321,8 +379,9 @@ app.post("/api/projects", authRequired, requireRole("admin", "project_manager"),
   const info = db
     .prepare(
       `INSERT INTO projects (name, description, start_date, end_date, status, manager_id, code, ministry, sector, state,
-        original_cost, revised_cost, expenditure, original_end_date, revised_end_date, delay_reason, delay_notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        original_cost, revised_cost, expenditure, original_end_date, revised_end_date, delay_reason, delay_notes,
+        data_source, reported_physical_progress)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?)`
     )
     .run(
       fields.name,
@@ -341,15 +400,18 @@ app.post("/api/projects", authRequired, requireRole("admin", "project_manager"),
       fields.original_end_date,
       fields.revised_end_date,
       fields.delay_reason,
-      fields.delay_notes
+      fields.delay_notes,
+      fields.reported_physical_progress
     );
   db.prepare("INSERT OR IGNORE INTO project_members (project_id, user_id) VALUES (?, ?)").run(
     info.lastInsertRowid,
     managerId
   );
-  logAudit(req.user, { action: "created project", entity: "project", entityId: info.lastInsertRowid, projectId: info.lastInsertRowid, detail: fields.name });
+  logAudit(req.user, { action: "created project", entity: "project", entityId: info.lastInsertRowid, projectId: info.lastInsertRowid, detail: fields.name, next: fields.status });
   const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(info.lastInsertRowid));
-  res.status(201).json({ ...project, insights: intel(project) });
+  const insights = intel(project);
+  recordHealth(project.id, insights);
+  res.status(201).json({ ...project, insights });
 });
 
 app.get("/api/projects/:id", authRequired, (req, res) => {
@@ -370,9 +432,18 @@ app.put("/api/projects/:id", authRequired, requireRole("admin", "project_manager
   if (!isISODate(fields.start_date) || !isISODate(fields.end_date)) {
     return res.status(400).json({ error: "Dates must use YYYY-MM-DD." });
   }
+  if (
+    (fields.original_end_date && !isISODate(fields.original_end_date)) ||
+    (fields.revised_end_date && !isISODate(fields.revised_end_date))
+  ) {
+    return res.status(400).json({ error: "Dates must use YYYY-MM-DD." });
+  }
+  const financeError = validateProjectNumbers(fields, row);
+  if (financeError) return res.status(400).json({ error: financeError });
   db.prepare(
     `UPDATE projects SET name=?, description=?, start_date=?, end_date=?, status=?, code=?, ministry=?, sector=?, state=?,
-     original_cost=?, revised_cost=?, expenditure=?, original_end_date=?, revised_end_date=?, delay_reason=?, delay_notes=?
+     original_cost=?, revised_cost=?, expenditure=?, original_end_date=?, revised_end_date=?, delay_reason=?, delay_notes=?,
+     reported_physical_progress=?
      WHERE id=?`
   ).run(
     fields.name,
@@ -391,6 +462,7 @@ app.put("/api/projects/:id", authRequired, requireRole("admin", "project_manager
     fields.revised_end_date,
     fields.delay_reason,
     fields.delay_notes,
+    fields.reported_physical_progress,
     id
   );
   logAudit(req.user, {
@@ -398,10 +470,14 @@ app.put("/api/projects/:id", authRequired, requireRole("admin", "project_manager
     entity: "project",
     entityId: id,
     projectId: id,
-    detail: `${row.status} → ${fields.status}; revised cost ₹${fields.revised_cost} Cr`,
+    detail: `${req.user.name} changed ${row.name} status from ${row.status} to ${fields.status}.`,
+    previous: `status=${row.status}; revised_cost=${row.revised_cost}; expenditure=${row.expenditure}; reported_physical_progress=${row.reported_physical_progress}`,
+    next: `status=${fields.status}; revised_cost=${fields.revised_cost}; expenditure=${fields.expenditure}; reported_physical_progress=${fields.reported_physical_progress}`,
   });
   const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id));
-  res.json({ ...project, insights: intel(project) });
+  const insights = intel(project);
+  recordHealth(id, insights);
+  res.json({ ...project, insights });
 });
 
 app.delete("/api/projects/:id", authRequired, requireRole("admin", "project_manager"), (req, res) => {
@@ -430,6 +506,15 @@ app.post("/api/projects/:id/members", authRequired, requireRole("admin", "projec
   const user = db.prepare("SELECT id FROM users WHERE id = ?").get(userId);
   if (!user) return res.status(400).json({ error: "User not found." });
   db.prepare("INSERT OR IGNORE INTO project_members (project_id, user_id) VALUES (?, ?)").run(id, userId);
+  const added = db.prepare("SELECT name FROM users WHERE id = ?").get(userId);
+  logAudit(req.user, {
+    action: "added team member",
+    entity: "project_member",
+    entityId: userId,
+    projectId: id,
+    detail: `${req.user.name} added ${added?.name || userId} to ${row.name}.`,
+    next: String(userId),
+  });
   res.json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)));
 });
 
@@ -442,7 +527,16 @@ app.delete("/api/projects/:id/members/:userId", authRequired, requireRole("admin
   if (userId === row.manager_id) {
     return res.status(400).json({ error: "The project manager cannot be removed from the team." });
   }
+  const removed = db.prepare("SELECT name FROM users WHERE id = ?").get(userId);
   db.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").run(id, userId);
+  logAudit(req.user, {
+    action: "removed team member",
+    entity: "project_member",
+    entityId: userId,
+    projectId: id,
+    detail: `${req.user.name} removed ${removed?.name || userId} from ${row.name}.`,
+    previous: String(userId),
+  });
   res.json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)));
 });
 
@@ -462,6 +556,13 @@ app.post("/api/projects/:id/milestones", authRequired, requireRole("admin", "pro
     due_date,
     status
   );
+  logAudit(req.user, {
+    action: "created milestone",
+    entity: "milestone",
+    projectId: id,
+    detail: `${req.user.name} added milestone "${title}" on ${row.name}.`,
+    next: `${title} / ${due_date} / ${status}`,
+  });
   res.status(201).json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)));
 });
 
@@ -478,6 +579,15 @@ app.put("/api/milestones/:id", authRequired, requireRole("admin", "project_manag
     String(req.body?.status ?? milestone.status),
     id
   );
+  logAudit(req.user, {
+    action: "updated milestone",
+    entity: "milestone",
+    entityId: id,
+    projectId: milestone.project_id,
+    detail: `${req.user.name} changed milestone "${milestone.title}" from ${milestone.status} to ${req.body?.status ?? milestone.status}.`,
+    previous: milestone.status,
+    next: req.body?.status ?? milestone.status,
+  });
   res.json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(milestone.project_id)));
 });
 
@@ -504,6 +614,13 @@ app.post("/api/projects/:id/tasks", authRequired, requireRole("admin", "project_
     req.body?.priority || "medium",
     Number(req.body?.progress ?? 0)
   );
+  logAudit(req.user, {
+    action: "created task",
+    entity: "task",
+    projectId: id,
+    detail: `${req.user.name} added task "${title}" on ${row.name}.`,
+    next: title,
+  });
   res.status(201).json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)));
 });
 
@@ -541,6 +658,15 @@ app.put("/api/tasks/:id", authRequired, requireRole("admin", "project_manager"),
     next.progress,
     id
   );
+  logAudit(req.user, {
+    action: "updated task",
+    entity: "task",
+    entityId: id,
+    projectId: task.project_id,
+    detail: `${req.user.name} changed task "${task.title}" from ${task.status} to ${next.status}.`,
+    previous: `status=${task.status}; progress=${task.progress}`,
+    next: `status=${next.status}; progress=${next.progress}`,
+  });
   res.json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(task.project_id)));
 });
 
@@ -616,19 +742,36 @@ app.get("/api/briefing", authRequired, (req, res) => {
   const reasonCounts = {};
   let costOverruns = 0;
   let scheduleOverruns = 0;
+  const newlyRisk = [];
+  const improving = [];
+  const deteriorating = [];
   for (const p of projects) {
     health[p.insights.health.band] = (health[p.insights.health.band] || 0) + 1;
     if (p.delay_reason) reasonCounts[p.delay_reason] = (reasonCounts[p.delay_reason] || 0) + 1;
     if (p.insights.finance.cost_overrun_pct >= 5) costOverruns += 1;
     if (p.insights.finance.time_overrun_days >= 1) scheduleOverruns += 1;
+    const prev = p.previous_health_band || "";
+    const cur = p.insights.health.band;
+    const prevRank = HEALTH_RANK[prev];
+    const curRank = HEALTH_RANK[cur] ?? 0;
+    if ((prev === "on_track" || prev === "watch") && (cur === "at_risk" || cur === "critical")) {
+      newlyRisk.push(p.name);
+    }
+    if (prevRank != null && curRank < prevRank) improving.push(p.name);
+    if (prevRank != null && curRank > prevRank) deteriorating.push(p.name);
   }
   const attention = health.at_risk + health.critical + health.watch;
   const topReasons = Object.entries(reasonCounts)
     .sort((a, b) => b[1] - a[1])
     .map(([id, count]) => ({ label: delayLabel(id), count }));
-  const interventions = db
-    .prepare("SELECT * FROM interventions WHERE status != 'resolved' ORDER BY due_date LIMIT 8")
-    .all();
+  const visibleIds = projects.map((p) => p.id);
+  const interventions = visibleIds.length
+    ? db
+        .prepare(
+          `SELECT * FROM interventions WHERE status != 'resolved' AND project_id IN (${visibleIds.map(() => "?").join(",")}) ORDER BY due_date LIMIT 8`
+        )
+        .all(...visibleIds)
+    : [];
   res.json({
     period,
     total_projects: projects.length,
@@ -652,7 +795,23 @@ app.get("/api/briefing", authRequired, (req, res) => {
       ``,
       `Projects with cost overruns: ${costOverruns}`,
       `Projects with schedule overruns: ${scheduleOverruns}`,
+      ``,
+      `Newly entering at-risk / critical (vs last stored band):`,
+      newlyRisk.length ? newlyRisk.map((n) => `- ${n}`).join("\n") : "- None in this snapshot",
+      ``,
+      `Improving:`,
+      improving.length ? improving.map((n) => `- ${n}`).join("\n") : "- None in this snapshot",
+      ``,
+      `Deteriorating:`,
+      deteriorating.length ? deteriorating.map((n) => `- ${n}`).join("\n") : "- None in this snapshot",
+      ``,
+      `Major unresolved interventions: ${interventions.length}`,
+      ``,
+      `Note: Figures combine demo/seed records, manual entry and CSV imports. Indicators are prototype calculations, not official PAIMANA statistics.`,
     ].join("\n"),
+    newly_risk: newlyRisk,
+    improving,
+    deteriorating,
   });
 });
 
@@ -675,6 +834,9 @@ app.get("/api/export/projects.csv", authRequired, (req, res) => {
     "health_band",
     "delay_reason",
     "status",
+    "data_source",
+    "calculated_progress",
+    "reported_physical_progress",
   ];
   const rows = projects.map((p) => ({
     code: p.code,
@@ -693,6 +855,9 @@ app.get("/api/export/projects.csv", authRequired, (req, res) => {
     health_band: p.insights.health.band,
     delay_reason: p.delay_reason,
     status: p.status,
+    data_source: p.data_source || "manual",
+    calculated_progress: p.progress,
+    reported_physical_progress: p.reported_physical_progress ?? "",
   }));
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", "attachment; filename=projects.csv");
@@ -736,12 +901,16 @@ app.post("/api/import/projects", authRequired, requireRole("admin"), (req, res) 
       original_end_date: r.original_end_date || end,
       revised_end_date: r.revised_end_date || r["Revised End Date"] || end,
       status: "active",
+      reported_physical_progress: r.reported_physical_progress || r["Reported Physical Progress"],
     });
+    const financeError = validateProjectNumbers(fields);
+    if (financeError) continue;
     const info = db
       .prepare(
         `INSERT INTO projects (name, description, start_date, end_date, status, manager_id, code, ministry, sector, state,
-          original_cost, revised_cost, expenditure, original_end_date, revised_end_date, delay_reason, delay_notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          original_cost, revised_cost, expenditure, original_end_date, revised_end_date, delay_reason, delay_notes,
+          data_source, reported_physical_progress)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'imported', ?)`
       )
       .run(
         fields.name,
@@ -760,7 +929,8 @@ app.post("/api/import/projects", authRequired, requireRole("admin"), (req, res) 
         fields.original_end_date,
         fields.revised_end_date,
         "",
-        ""
+        "",
+        fields.reported_physical_progress
       );
     db.prepare("INSERT OR IGNORE INTO project_members (project_id, user_id) VALUES (?, ?)").run(info.lastInsertRowid, req.user.id);
     imported += 1;
@@ -817,6 +987,8 @@ app.put("/api/issues/:id", authRequired, requireRole("admin", "project_manager")
     entityId: id,
     projectId: issue.project_id,
     detail: `${issue.status} → ${req.body?.status ?? issue.status}`,
+    previous: issue.status,
+    next: req.body?.status ?? issue.status,
   });
   res.json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(issue.project_id)));
 });
@@ -868,11 +1040,23 @@ app.put("/api/interventions/:id", authRequired, requireRole("admin", "project_ma
     entityId: id,
     projectId: iv.project_id,
     detail: `${iv.status} → ${req.body?.status ?? iv.status}`,
+    previous: iv.status,
+    next: req.body?.status ?? iv.status,
   });
   res.json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(iv.project_id)));
 });
 
 const port = Number(process.env.PORT || 3001);
-app.listen(port, () => {
-  console.log(`SIH26103 API on http://localhost:${port}`);
-});
+export { app };
+
+function isDirectRun() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return import.meta.url === pathToFileURL(path.resolve(entry)).href;
+}
+
+if (isDirectRun()) {
+  app.listen(port, () => {
+    console.log(`SIH26103 API on http://localhost:${port}`);
+  });
+}

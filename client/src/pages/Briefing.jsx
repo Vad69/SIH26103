@@ -19,11 +19,34 @@ export default function Briefing() {
         <div>
           <p className="text-xs tracking-[0.2em] text-ink/45 uppercase">Review</p>
           <h2 className="font-serif mt-1 text-3xl">Monthly monitoring brief</h2>
-          <p className="mt-2 text-sm text-ink/60">Deterministic brief from the live database — the same family of artefact as MoSPI flash / review reports.</p>
+          <p className="mt-2 text-sm text-ink/60">Deterministic brief from this workspace (demo, imported, and manual records). Prototype calculations — not an official MoSPI flash report.</p>
         </div>
         <button className="rounded-md bg-navy px-4 py-2 text-sm text-white" type="button" onClick={() => window.print()}>
           Print / PDF
         </button>
+      </div>
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card>
+          <p className="text-xs uppercase text-ink/50">Newly at risk / critical</p>
+          <ul className="mt-2 list-disc pl-5 text-sm">
+            {(data.newly_risk || []).map((n) => <li key={n}>{n}</li>)}
+            {!data.newly_risk?.length ? <li className="list-none text-ink/50">None in this snapshot</li> : null}
+          </ul>
+        </Card>
+        <Card>
+          <p className="text-xs uppercase text-ink/50">Improving</p>
+          <ul className="mt-2 list-disc pl-5 text-sm">
+            {(data.improving || []).map((n) => <li key={n}>{n}</li>)}
+            {!data.improving?.length ? <li className="list-none text-ink/50">None in this snapshot</li> : null}
+          </ul>
+        </Card>
+        <Card>
+          <p className="text-xs uppercase text-ink/50">Deteriorating</p>
+          <ul className="mt-2 list-disc pl-5 text-sm">
+            {(data.deteriorating || []).map((n) => <li key={n}>{n}</li>)}
+            {!data.deteriorating?.length ? <li className="list-none text-ink/50">None in this snapshot</li> : null}
+          </ul>
+        </Card>
       </div>
       <Card>
         <pre className="whitespace-pre-wrap font-sans text-sm leading-6">{data.narrative}</pre>

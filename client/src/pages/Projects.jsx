@@ -51,6 +51,14 @@ export default function Projects() {
         <div>
           <p className="text-xs tracking-[0.2em] text-ink/45 uppercase">Portfolio</p>
           <h2 className="font-serif mt-1 text-3xl">Projects</h2>
+          <p className="mt-2 max-w-2xl text-sm text-ink/60">
+            Progress bars use system-calculated task averages, not official ministry-reported physical progress.
+            {user.role === "admin"
+              ? " Projects you create here are assigned to you as manager, so a Project Manager cannot edit them."
+              : user.role === "project_manager"
+                ? " You can edit only projects you manage."
+                : " Member access is read-only."}
+          </p>
         </div>
       </div>
 
@@ -122,13 +130,13 @@ export default function Projects() {
               <p className="mt-2 line-clamp-2 text-sm text-ink/60">{p.description}</p>
               <div className="mt-4">
                 <div className="mb-1 flex justify-between text-xs text-ink/50">
-                  <span>{p.progress}%</span>
+                  <span>System-calculated {p.progress}%</span>
                   <span>{p.delayed_task_count} delayed</span>
                 </div>
                 <ProgressBar value={p.progress} />
               </div>
               <p className="mt-3 text-xs text-ink/50">
-                {p.start_date} → {p.end_date} · {p.manager?.name}
+                {p.start_date} → {p.end_date} · {p.manager?.name} · Data source: {p.data_source || "manual"}
               </p>
             </Card>
           </Link>

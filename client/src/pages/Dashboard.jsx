@@ -84,7 +84,7 @@ export default function Dashboard() {
           <p className="text-xs tracking-[0.2em] text-ink/45 uppercase">MoSPI · SIH26103</p>
           <h2 className="font-serif mt-1 text-3xl">National monitoring command center</h2>
           <p className="mt-2 max-w-2xl text-sm text-ink/60">
-            Decision support: cost and time overruns, early warnings, delay reasons, and interventions — not a task board with a ministry logo.
+            Prototype decision-support using PAIMANA-aligned monitoring concepts (cost, time, milestones, delay reasons, interventions). Seeded projects are <strong>demo data</strong>. Indicators are calculated in this app — they are not official PAIMANA statistics.
           </p>
         </div>
         <button className="rounded-md border border-sand bg-white px-3 py-2 text-sm" type="button" onClick={exportCsv}>
@@ -226,7 +226,8 @@ export default function Dashboard() {
                 <StatusPill status={p.health?.band} />
               </div>
               <p className="mb-2 text-xs text-ink/50">
-                Planned {p.planned_progress}% · Actual {p.progress}% · {p.progress - p.planned_progress}% variance
+                Planned (elapsed original timeline) {p.planned_progress}% · System-calculated (task average) {p.calculated_progress ?? p.progress}%
+                {p.reported_physical_progress != null ? ` · Reported ${p.reported_physical_progress}%` : ""} · variance {p.progress - p.planned_progress}%
               </p>
               <ProgressBar value={p.progress} />
             </Link>

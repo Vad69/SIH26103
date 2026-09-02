@@ -112,12 +112,13 @@ export default function ProjectDetail() {
               <select
                 className="rounded border border-sand bg-white px-2 py-1 text-sm"
                 value={project.status}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setError("");
                   api(`/api/projects/${id}`, {
                     method: "PUT",
                     body: JSON.stringify({ ...project, status: e.target.value }),
-                  }).then(load)
-                }
+                  }).then(load).catch((err) => setError(err.message));
+                }}
               >
                 <option value="planning">Planning</option>
                 <option value="active">Active</option>
@@ -149,8 +150,14 @@ export default function ProjectDetail() {
 
       <div className="grid gap-4 sm:grid-cols-4">
         <Card>
-          <p className="text-xs text-ink/50 uppercase">Progress</p>
+        <p className="text-xs text-ink/50 uppercase">System-calculated progress</p>
           <p className="font-serif mt-1 text-2xl">{project.progress}%</p>
+          <p className="mt-1 text-[11px] text-ink/50">Average of task progress. Not official physical progress.</p>
+          {project.reported_physical_progress != null && project.reported_physical_progress !== "" ? (
+            <p className="mt-2 text-xs">Reported physical progress: {project.reported_physical_progress}%</p>
+          ) : (
+            <p className="mt-2 text-xs text-ink/50">No ministry-reported physical progress entered.</p>
+          )}
           <div className="mt-2"><ProgressBar value={project.progress} /></div>
         </Card>
         <Card>
@@ -165,6 +172,7 @@ export default function ProjectDetail() {
         <Card>
           <p className="text-xs text-ink/50 uppercase">Manager</p>
           <p className="mt-1 text-sm">{project.manager?.name}</p>
+          <p className="mt-2 text-[11px] text-ink/50">Data source: {(project.data_source || "manual").replace("_", " ")}</p>
         </Card>
       </div>
 
@@ -391,40 +399,6 @@ export default function ProjectDetail() {
         </Card>
       ) : null}
 
-      {tab === "Progress" ? (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Card>
-            <h3 className="font-medium">Task status</h3>
-            <div className="mx-auto mt-4 h-56 max-w-xs">
-              <Doughnut
-                data={{
-                  labels: ["To do", "In progress", "Done"],
-                  datasets: [
-                    {
-                      data: [statusCounts.todo, statusCounts.in_progress, statusCounts.done],
-                      backgroundColor: ["#cfc6b6", "#16345c", "#1f6f6a"],
-                      borderWidth: 0,
-                    },
-                  ],
-                }}
-                options={{ plugins: { legend: { position: "bottom" } } }}
-              />
-            </div>
-          </Card>
-          <Card>
-            <h3 className="font-medium">Health notes</h3>
-            <ul className="mt-3 space-y-2 text-sm">
-              {project.insights.alerts.map((a) => (
-                <li key={a.code} className="rounded-lg border border-sand p-3">
-                  <StatusPill status={a.severity} />
-                  <p className="mt-2">{a.message}</p>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        </div>
-      ) : null}
-
       {tab === "Risk" ? (
         <div className="space-y-4">
           <Card>
@@ -435,12 +409,16 @@ export default function ProjectDetail() {
               </div>
               <StatusPill status={project.insights.health.band} />
             </div>
+            <p className="mt-3 text-sm font-medium text-ink/80">
+              Risk score is a rule-based decision-support indicator, not an ML prediction.
+            </p>
+            <p className="mt-3 text-sm text-ink/70">{project.insights.health.band_explanation}</p>
             <p className="mt-4 text-sm font-medium">{project.insights.health.intervention}</p>
             <div className="mt-4 grid gap-2 sm:grid-cols-5 text-sm">
-              {Object.entries(project.insights.health.factors).map(([k, v]) => (
-                <div key={k} className="rounded-lg bg-paper p-3">
-                  <p className="text-xs text-ink/50 capitalize">{k.replaceAll("_", " ")}</p>
-                  <p className="font-serif text-2xl">{v}</p>
+              {(project.insights.health.factor_rows || Object.entries(project.insights.health.factors).map(([k, v]) => ({ label: k.replaceAll("_", " "), score: v }))).map((row) => (
+                <div key={row.label} className="rounded-lg bg-paper p-3">
+                  <p className="text-xs text-ink/50">{row.label}</p>
+                  <p className="font-serif text-2xl">{row.score}<span className="text-sm text-ink/40"> / 100</span></p>
                 </div>
               ))}
             </div>
@@ -456,9 +434,13 @@ export default function ProjectDetail() {
           </Card>
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
-              <h3 className="font-medium">Planned vs actual physical progress</h3>
-              <p className="mt-2 text-sm">Planned {project.insights.finance.planned_physical}% · Actual {project.progress}%</p>
-              <p className="text-sm text-ink/60">Schedule variance {project.insights.schedule_variance}%</p>
+              <h3 className="font-medium">Planned vs system-calculated progress</h3>
+              <p className="mt-2 text-sm">Expected from original timeline: {project.insights.finance.planned_physical}%</p>
+              <p className="text-sm">System-calculated (task average): {project.progress}%</p>
+              {project.insights.reported_physical_progress != null ? (
+                <p className="text-sm">Reported physical progress: {project.insights.reported_physical_progress}%</p>
+              ) : null}
+              <p className="mt-1 text-xs text-ink/50">{project.insights.progress_method}</p>
               <div className="mt-3"><ProgressBar value={project.progress} /></div>
             </Card>
             <Card>
@@ -512,13 +494,15 @@ export default function ProjectDetail() {
                       revised_end_date: fd.get("revised_end_date"),
                       delay_reason: fd.get("delay_reason"),
                       delay_notes: fd.get("delay_notes"),
+                      reported_physical_progress: fd.get("reported_physical_progress"),
                     }),
-                  }).then(load);
+                  }).then(load).catch((err) => setError(err.message));
                 }}
               >
                 <Field label="Original cost (₹ Cr)"><input name="original_cost" type="number" step="0.01" defaultValue={project.original_cost} className={inputClass} /></Field>
                 <Field label="Revised cost (₹ Cr)"><input name="revised_cost" type="number" step="0.01" defaultValue={project.revised_cost} className={inputClass} /></Field>
                 <Field label="Expenditure (₹ Cr)"><input name="expenditure" type="number" step="0.01" defaultValue={project.expenditure} className={inputClass} /></Field>
+                <Field label="Reported physical progress (%)"><input name="reported_physical_progress" type="number" step="0.1" min="0" max="100" defaultValue={project.reported_physical_progress ?? ""} className={inputClass} /></Field>
                 <Field label="Original completion"><input name="original_end_date" type="date" defaultValue={project.original_end_date || project.end_date} className={inputClass} /></Field>
                 <Field label="Revised completion"><input name="revised_end_date" type="date" defaultValue={project.revised_end_date || project.end_date} className={inputClass} /></Field>
                 <Field label="Reason for delay">
@@ -530,6 +514,7 @@ export default function ProjectDetail() {
                 <div className="md:col-span-2">
                   <Field label="Additional explanation"><textarea name="delay_notes" defaultValue={project.delay_notes} className={inputClass} rows={2} /></Field>
                 </div>
+                {error ? <p className="text-sm text-accent md:col-span-2">{error}</p> : null}
                 <button className="rounded-md bg-navy px-4 py-2 text-sm text-white" type="submit">Save financials</button>
               </form>
             </Card>
@@ -656,6 +641,9 @@ export default function ProjectDetail() {
               <li key={a.id} className="py-2">
                 <p className="font-medium">{a.actor_name} · {a.action}</p>
                 <p className="text-ink/50">{new Date(a.created_at).toLocaleString()} · {a.detail}</p>
+                {a.prev_value || a.new_value ? (
+                  <p className="text-xs text-ink/40">Previous: {a.prev_value || "—"} → New: {a.new_value || "—"}</p>
+                ) : null}
               </li>
             ))}
             {!project.audit?.length ? <li className="py-2 text-ink/50">No recorded changes yet.</li> : null}

@@ -43,7 +43,7 @@ export default function Reports() {
         <p className="text-xs tracking-[0.2em] text-ink/45 uppercase">Reports</p>
         <h2 className="font-serif mt-1 text-3xl">Completion and delays</h2>
         <p className="mt-2 text-sm text-ink/55">
-          Generated {new Date(data.generated_at).toLocaleString()} · overall progress {data.overall_progress}%
+          Generated {new Date(data.generated_at).toLocaleString()} · overall system-calculated progress {data.overall_progress}% (task averages; not official physical progress)
         </p>
       </div>
 

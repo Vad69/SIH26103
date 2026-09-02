@@ -1,58 +1,44 @@
 # SIH26103 — Pragati
 
-Web-based integrated **project-monitoring platform** for the Ministry of Statistics and Programme Implementation (Smart Automation).
+Prototype **decision-support** for project monitoring (MoSPI / Smart Automation). It uses **PAIMANA-aligned monitoring concepts** (cost, time, milestones, delay reasons, interventions). It does **not** connect to live PAIMANA, and it does **not** publish official PAIMANA indicators.
 
-MVP path:
+The working story is: **detect → explain → prioritize → intervene → track → report.**
 
-```text
-Login → Dashboard → Projects → Project details
-                         ├── Tasks
-                         ├── Milestones
-                         ├── Team
-                         ├── Timeline
-                         └── Progress / reports
-```
+## What the numbers mean
 
-The “intelligent” piece is a **Project Risk Intelligence Engine** — explainable scores for schedule, physical progress, finance, milestones and critical tasks. It produces early warnings and recommended interventions. It is not a trained ML model.
-
-The product is framed as a **decision-support / accountability layer** (cost & time overrun, delay reasons, issues, interventions, audit, monthly brief), not a generic task board.
+| Figure | Meaning |
+| --- | --- |
+| **System-calculated physical progress** | Average of task progress in this app. Not an official ministry-reported physical-progress figure. |
+| **Reported physical progress** | Optional value entered by an officer (or imported). Shown separately when present. |
+| **Health / risk score** | Rule-based weighted score (schedule, physical, finance, milestones, critical tasks). Not an ML prediction. |
+| **Data source** | `demo` (seeded), `imported` (CSV), or `manual` (created in the UI). Seeded projects are **not** live government records. |
 
 ## Stack
 
 - Frontend: React + Vite + Tailwind CSS + Chart.js
-- Backend: Node.js + Express + JWT
-- Database: SQLite via Node’s built-in `node:sqlite` (`server/data/monitor.db`) — no Python, Visual Studio, or `node-gyp`
+- Backend: Node.js + Express + JWT + bcrypt
+- Database: SQLite via `node:sqlite` (`server/data/monitor.db`)
 
-## Requirements
+## Run locally
 
-- Node.js **22.13+** (Node 24 is fine)
-- npm 10+
+Node.js **22.13+**. Do **not** run `npm install all`.
 
-Do **not** run `npm install all`. That tries to install a package named `all`. The script you want is `npm run install:all`.
-
-## Run locally (Windows / macOS / Linux)
-
-From the repo root:
-
-```bat
-npm uninstall all
-rmdir /s /q server\node_modules
-rmdir /s /q client\node_modules
+```bash
 npm install
 npm run install:all
 npm run dev
 ```
 
-On macOS/Linux, replace the `rmdir` lines with `rm -rf server/node_modules client/node_modules`.
-
 - App: http://localhost:5173
 - API: http://localhost:3001
 
-If a previous install left files locked on Windows (`EPERM`), close other terminals/IDEs using this folder, delete `server\node_modules`, then run `npm run install:all` again.
+```bash
+npm test
+```
 
 ## Demo accounts
 
-There is exactly **one Admin**. The login page does not create users. Vardaan adds members and project managers from **Users** after signing in.
+Exactly **one Admin**. No public signup.
 
 | Name | Role | Email | Password |
 | --- | --- | --- | --- |
@@ -60,12 +46,21 @@ There is exactly **one Admin**. The login page does not create users. Vardaan ad
 | Ishika Basu | Project manager | ishika@mospi.gov.in | ishika123 |
 | Disha Ghosh | Member (read-only) | disha@mospi.gov.in | disha123 |
 
-If you already ran an older seed, restart the server once: it remaps the previous demo emails to these accounts.
+Role checks run on the API. Members receive **HTTP 403** on write endpoints even if a request is forged.
 
-Passwords are hashed with bcrypt. Role checks run on the API (members get **403** on create/edit/delete). The UI only hides buttons.
+## Judge demo flow
 
-Seed data includes four MoSPI-flavoured projects so the dashboard is not empty on first login.
+1. Log in as Admin.
+2. Open the command center; filter by ministry / sector / state / health.
+3. Open a high-risk project (Risk tab: factors, band explanation, early warning).
+4. Inspect Finance, Issues, and Interventions.
+5. Change project status or financials as Admin (validation errors if figures are invalid).
+6. Open Users; create a Project Manager and a Member. A second Admin cannot be created.
+7. Create a project as Admin (you become manager). Log out.
+8. Log in as Ishika (Project Manager). Confirm she can edit her own projects and **cannot** edit the Admin-owned project (403).
+9. Log out. Log in as Disha (Member). Confirm read-only UI and that a write request returns **403**.
+10. Generate the monthly brief. Import a CSV (Admin). Export portfolio CSV from the command center.
 
-```bash
-npm test
-```
+## Deliberately not included
+
+Live PAIMANA feeds, fake ML, public registration, multiple Admins, email/SMS, GIS, extra chart screens, or features that cannot be shown on localhost.

@@ -205,13 +205,62 @@ export function analyzeProject({ project, tasks = [], milestones = [], issues = 
     band !== "on_track" &&
     (physicalGap >= 8 || overdueCritical.length >= 1 || finance.cost_overrun_pct >= 10 || openMilestones.length >= 2);
 
-  let intervention = "Continue routine monitoring.";
-  if (band === "critical") intervention = "Immediate review recommended. Escalate bottlenecks to the responsible ministry and track a time-bound intervention.";
-  else if (band === "at_risk") intervention = "Immediate review recommended. Assign an owner to the top delay reason and close overdue critical activities.";
-  else if (band === "watch") intervention = "Watch-list the project. Confirm whether physical progress can catch the original timeline this month.";
+  let intervention = "Continue routine monitoring. This engine identifies and prioritizes work; it does not close it.";
+  if (band === "critical") {
+    intervention =
+      "Immediate review recommended. Open the Issues and Interventions tabs, then assign or update a time-bound action. The system does not resolve the bottleneck by itself.";
+  } else if (band === "at_risk") {
+    intervention =
+      "Immediate review recommended. Check overdue critical tasks and whether an intervention is already assigned. The system flags the gap; an officer must act.";
+  } else if (band === "watch") {
+    intervention =
+      "Watch-list the project this month. Confirm whether system-calculated progress can catch the original timeline.";
+  }
+
+  const whatBits = [];
+  if (physicalGap >= 8) {
+    whatBits.push(
+      `Physical progress is ${physicalGap}% below expected progress (${progress}% system-calculated vs ${elapsed}% planned from the original timeline)`
+    );
+  }
+  if (overdueCritical.length) {
+    whatBits.push(
+      `${overdueCritical.length} critical task${overdueCritical.length === 1 ? " is" : "s are"} overdue`
+    );
+  }
+  if (finance.cost_overrun_pct >= 10) {
+    whatBits.push(`cost overrun is ${finance.cost_overrun_pct}% versus original approved cost`);
+  }
+  if (openMilestones.length >= 2) {
+    whatBits.push(`${openMilestones.length} milestones have passed without completion`);
+  }
+  const what = whatBits.join("; ") || reasons[0]?.text || "Slippage indicators have worsened relative to the original plan";
+  const reviewBit = overdueCritical.length
+    ? "Review delayed critical tasks and the assigned intervention."
+    : openIssues
+      ? "Review open bottlenecks and intervention status."
+      : "Review finance, milestones, and the recorded delay reason.";
+  const earlyWarningText = earlyWarning
+    ? `${what}. ${reviewBit} The system identifies and prioritizes intervention; it does not close the issue.`
+    : null;
+
+  const bandWhy =
+    band === "on_track"
+      ? `Classified On Track because the composite score is ${score}/100 (80 or above).`
+      : band === "watch"
+        ? `Classified Watch because the composite score is ${score}/100 (65–79).`
+        : band === "at_risk"
+          ? `Classified At Risk because the composite score is ${score}/100 (45–64).`
+          : `Classified Critical because the composite score is ${score}/100 (below 45).`;
 
   return {
     progress,
+    calculated_progress: progress,
+    reported_physical_progress:
+      project.reported_physical_progress == null || project.reported_physical_progress === ""
+        ? null
+        : Number(project.reported_physical_progress),
+    progress_method: "System-calculated physical progress based on task progress. Not an official ministry-reported physical progress figure.",
     schedule_elapsed_pct: elapsed,
     schedule_variance: progress - elapsed,
     overdue_count: overdue.length,
@@ -227,10 +276,16 @@ export function analyzeProject({ project, tasks = [], milestones = [], issues = 
       factors,
       reasons,
       intervention,
+      factor_rows: [
+        { label: "Schedule", score: scheduleScore },
+        { label: "Physical Progress", score: physicalScore },
+        { label: "Financial Progress", score: financialScore },
+        { label: "Milestones", score: milestoneScore },
+        { label: "Critical Tasks", score: criticalScore },
+      ],
+      band_explanation: `${bandWhy} Score is a weighted blend of schedule (25%), physical (25%), financial (20%), milestones (15%) and critical tasks (15%). It is a rule-based decision-support indicator, not an ML prediction.`,
       early_warning: earlyWarning,
-      early_warning_text: earlyWarning
-        ? `${project.name || "This project"} has a high probability of schedule slippage.`
-        : null,
+      early_warning_text: earlyWarningText,
     },
   };
 }

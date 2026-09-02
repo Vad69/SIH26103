@@ -1,9 +1,9 @@
 import db from "./db.js";
 
-export function logAudit(user, { action, entity, entityId = null, projectId = null, detail = "" }) {
+export function logAudit(user, { action, entity, entityId = null, projectId = null, detail = "", previous = "", next = "" }) {
   db.prepare(
-    `INSERT INTO audit_log (user_id, actor_name, action, entity, entity_id, project_id, detail, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO audit_log (user_id, actor_name, action, entity, entity_id, project_id, detail, prev_value, new_value, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     user?.id || null,
     user?.name || "System",
@@ -12,6 +12,8 @@ export function logAudit(user, { action, entity, entityId = null, projectId = nu
     entityId,
     projectId,
     detail,
+    previous == null ? "" : String(previous),
+    next == null ? "" : String(next),
     new Date().toISOString()
   );
 }

@@ -76,4 +76,8 @@ test("cost overrun and health band are explainable", () => {
   assert.ok(result.health.score < 65);
   assert.ok(["at_risk", "critical"].includes(result.health.band));
   assert.equal(result.health.early_warning, true);
+  assert.match(result.health.early_warning_text, /below expected progress|critical task/i);
+  assert.match(result.health.early_warning_text, /does not close/i);
+  assert.equal(result.health.factor_rows.length, 5);
+  assert.match(result.progress_method, /task progress/i);
 });

@@ -45,7 +45,7 @@ export default function ImportPage() {
         <p className="text-xs tracking-[0.2em] text-ink/45 uppercase">Admin</p>
         <h2 className="font-serif mt-1 text-3xl">Import project data</h2>
         <p className="mt-2 max-w-2xl text-sm text-ink/60">
-          Paste CSV (Excel can save as CSV). Preview first, then import. This is how a department would load a PAIMANA-style extract rather than typing 1,900 rows.
+          Paste CSV (Excel can save as CSV). Preview first, then import. Rows are stored as <strong>Imported</strong> data — this is not a live PAIMANA feed.
         </p>
       </div>
       <Card>

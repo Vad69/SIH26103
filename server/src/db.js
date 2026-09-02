@@ -7,7 +7,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.join(__dirname, "..", "data");
 fs.mkdirSync(dataDir, { recursive: true });
 
-const raw = new DatabaseSync(path.join(dataDir, "monitor.db"));
+const dbPath = process.env.MONITOR_DB || path.join(dataDir, "monitor.db");
+const raw = new DatabaseSync(dbPath);
 raw.exec("PRAGMA journal_mode = WAL");
 raw.exec("PRAGMA foreign_keys = ON");
 
@@ -111,6 +112,11 @@ addColumn("projects", "original_end_date", "TEXT");
 addColumn("projects", "revised_end_date", "TEXT");
 addColumn("projects", "delay_reason", "TEXT DEFAULT ''");
 addColumn("projects", "delay_notes", "TEXT DEFAULT ''");
+addColumn("projects", "data_source", "TEXT DEFAULT 'manual'");
+addColumn("projects", "reported_physical_progress", "REAL");
+addColumn("projects", "health_band", "TEXT DEFAULT ''");
+addColumn("projects", "health_score", "INTEGER");
+addColumn("projects", "previous_health_band", "TEXT DEFAULT ''");
 
 db.exec(`
 UPDATE projects SET original_end_date = end_date WHERE original_end_date IS NULL OR original_end_date = '';
@@ -156,6 +162,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
 `);
 
 addColumn("audit_log", "project_id", "INTEGER");
+addColumn("audit_log", "prev_value", "TEXT DEFAULT ''");
+addColumn("audit_log", "new_value", "TEXT DEFAULT ''");
 
 export function todayISO() {
   return new Date().toISOString().slice(0, 10);

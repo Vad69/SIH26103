@@ -167,6 +167,8 @@ const PORTFOLIO = [
     revised_end_date: "2026-12-15",
     delay_reason: "procurement",
     delay_notes: "State tablet tenders slipped two cycles.",
+    reported_physical_progress: 34,
+    previous_health_band: "watch",
     issues: [
       {
         title: "Tablet inventory stuck in state procurement",
@@ -202,6 +204,8 @@ const PORTFOLIO = [
     revised_end_date: "2026-09-30",
     delay_reason: "coordination",
     delay_notes: "Centre feed SLAs not signed with two source ministries.",
+    reported_physical_progress: 48,
+    previous_health_band: "watch",
     issues: [
       {
         title: "Delayed centre feeds from two source agencies",
@@ -237,6 +241,8 @@ const PORTFOLIO = [
     revised_end_date: "2026-07-31",
     delay_reason: "land_acquisition",
     delay_notes: "Ward-boundary GIS join blocked where municipal layers are incomplete.",
+    reported_physical_progress: 40,
+    previous_health_band: "at_risk",
     issues: [
       {
         title: "Municipal ward layers incomplete in three states",
@@ -263,6 +269,8 @@ const PORTFOLIO = [
     revised_end_date: "2025-12-15",
     delay_reason: "",
     delay_notes: "",
+    reported_physical_progress: 100,
+    previous_health_band: "on_track",
     issues: [],
     interventions: [],
   },
@@ -272,7 +280,8 @@ function seedDecisionSupport() {
   const now = new Date().toISOString();
   const update = db.prepare(
     `UPDATE projects SET code=?, ministry=?, sector=?, state=?, original_cost=?, revised_cost=?, expenditure=?,
-     original_end_date=?, revised_end_date=?, delay_reason=?, delay_notes=? WHERE name=?`
+     original_end_date=?, revised_end_date=?, delay_reason=?, delay_notes=?, data_source='demo',
+     reported_physical_progress=?, previous_health_band=? WHERE name=?`
   );
   const insertIssue = db.prepare(
     `INSERT INTO issues (project_id, title, category, severity, owner, intervention, due_date, status, created_at)
@@ -297,6 +306,8 @@ function seedDecisionSupport() {
       row.revised_end_date,
       row.delay_reason,
       row.delay_notes,
+      row.reported_physical_progress,
+      row.previous_health_band,
       row.name
     );
     const issueCount = db.prepare("SELECT COUNT(*) AS n FROM issues WHERE project_id = ?").get(project.id).n;
