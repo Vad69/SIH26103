@@ -43,7 +43,7 @@ export default function Reports() {
         <p className="text-xs tracking-[0.2em] text-ink/45 uppercase">Reports</p>
         <h2 className="font-serif mt-1 text-3xl">Completion and delays</h2>
         <p className="mt-2 text-sm text-ink/55">
-          Generated {new Date(data.generated_at).toLocaleString()} · overall progress {data.overall_progress}%
+          Generated {new Date(data.generated_at).toLocaleString()} · overall system-calculated progress {data.overall_progress}% (task averages; not official physical progress)
         </p>
       </div>
 
@@ -81,6 +81,22 @@ export default function Reports() {
           </div>
         </Card>
       </div>
+
+      <Card>
+        <h3 className="font-medium">Top delay reasons</h3>
+        {data.delay_reasons?.length ? (
+          <ul className="mt-3 space-y-2 text-sm">
+            {data.delay_reasons.map((r) => (
+              <li key={r.id} className="flex justify-between">
+                <span>{r.label}</span>
+                <span>{r.count} projects</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-sm text-ink/50">No coded delay reasons yet.</p>
+        )}
+      </Card>
 
       <Card>
         <h3 className="font-medium">Project summary</h3>

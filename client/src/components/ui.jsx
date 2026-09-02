@@ -14,6 +14,13 @@ export function StatusPill({ status }) {
     medium: "bg-navy/10 text-navy",
     low: "bg-sand text-ink/70",
     ok: "bg-teal/15 text-teal",
+    on_track: "bg-teal/15 text-teal",
+    watch: "bg-navy/10 text-navy",
+    at_risk: "bg-accent/15 text-accent",
+    open: "bg-accent/15 text-accent",
+    resolved: "bg-teal/15 text-teal",
+    admin: "bg-ink/10 text-ink",
+    project_manager: "bg-navy/10 text-navy",
   };
   const label = String(status || "").replaceAll("_", " ");
   return (
@@ -50,14 +57,16 @@ export const inputClass =
 export function InsightBanner({ insight }) {
   if (!insight) return null;
   const tone =
-    insight.severity === "high"
+    insight.severity === "high" || insight.severity === "critical"
       ? "border-accent/40 bg-accent/10"
-      : insight.severity === "ok"
+      : insight.severity === "ok" || insight.severity === "on_track"
         ? "border-teal/30 bg-teal/10"
         : "border-navy/20 bg-navy/5";
   return (
     <div className={`rounded-xl border px-4 py-3 text-sm ${tone}`}>
-      <p className="text-[11px] font-medium tracking-[0.16em] text-ink/50 uppercase">Intelligent check</p>
+      <p className="text-[11px] font-medium tracking-[0.16em] text-ink/50 uppercase">
+        {insight.title || "Risk intelligence"}
+      </p>
       <p className="mt-1 font-medium">{insight.message}</p>
     </div>
   );

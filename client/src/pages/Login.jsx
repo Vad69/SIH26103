@@ -44,7 +44,7 @@ export default function Login() {
             One desk for every project that still has a deadline.
           </h1>
           <p className="mt-6 max-w-md text-sand/80">
-            SIH26103 — a web-based integrated project-monitoring platform. Track status, slip, and the work that is actually late.
+            SIH26103 — a prototype decision-support layer inspired by government project-monitoring workflows (PAIMANA-aligned concepts). Seeded records are demo data, not live PAIMANA extracts.
           </p>
         </div>
         <dl className="relative grid max-w-md grid-cols-2 gap-6 text-sm">

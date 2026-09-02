@@ -2,9 +2,10 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth.jsx";
 
 const links = [
-  { to: "/", label: "Dashboard", end: true },
+  { to: "/", label: "Command center", end: true },
   { to: "/projects", label: "Projects" },
   { to: "/reports", label: "Reports" },
+  { to: "/briefing", label: "Monthly brief" },
 ];
 
 function roleLabel(role) {
@@ -24,7 +25,7 @@ export default function Layout() {
           <div className="border-b border-white/10 px-5 py-6">
             <p className="text-[11px] tracking-[0.22em] text-sand/70 uppercase">MoSPI · SIH26103</p>
             <h1 className="font-serif mt-1 text-2xl text-white">Pragati</h1>
-            <p className="mt-1 text-sm text-sand/80">Project monitoring</p>
+            <p className="mt-1 text-sm text-sand/80">Decision support</p>
           </div>
           <nav className="flex flex-1 flex-col gap-1 p-3">
             {links.map((l) => (
@@ -42,6 +43,17 @@ export default function Layout() {
               </NavLink>
             ))}
             {user.role === "admin" ? (
+              <>
+              <NavLink
+                to="/import"
+                className={({ isActive }) =>
+                  `rounded-md px-3 py-2 text-sm ${
+                    isActive ? "bg-white/10 text-white" : "text-sand/80 hover:bg-white/5 hover:text-white"
+                  }`
+                }
+              >
+                Import
+              </NavLink>
               <NavLink
                 to="/users"
                 className={({ isActive }) =>
@@ -52,6 +64,7 @@ export default function Layout() {
               >
                 Users
               </NavLink>
+              </>
             ) : null}
           </nav>
           <div className="border-t border-white/10 p-4 text-sm">

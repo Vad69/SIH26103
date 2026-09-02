@@ -153,6 +153,195 @@ function seedProjects(ids) {
   insertTask.run(p4, null, "Load test public APIs", "Peak traffic around release day.", ishika, "2025-11-01", "done", "high", 100);
 }
 
+const PORTFOLIO = [
+  {
+    name: "PLFS Digital Field Operations",
+    code: "MOSPI-PLFS-2026",
+    ministry: "Ministry of Statistics and Programme Implementation",
+    sector: "Statistics & IT systems",
+    state: "All India / Multi-state",
+    original_cost: 186,
+    revised_cost: 214,
+    expenditure: 97,
+    original_end_date: "2026-09-30",
+    revised_end_date: "2026-12-15",
+    delay_reason: "procurement",
+    delay_notes: "State tablet tenders slipped two cycles.",
+    reported_physical_progress: 34,
+    previous_health_band: "watch",
+    issues: [
+      {
+        title: "Tablet inventory stuck in state procurement",
+        category: "procurement",
+        severity: "critical",
+        owner: "MoSPI / State DES",
+        intervention: "Joint review with state finance departments",
+        due_date: "2026-09-30",
+        status: "open",
+      },
+    ],
+    interventions: [
+      {
+        action: "Convene state DES procurement cell; freeze a common rate contract",
+        authority: "MoSPI",
+        assigned_officer: "Ishika Basu",
+        due_date: "2026-09-20",
+        priority: "critical",
+        status: "in_progress",
+      },
+    ],
+  },
+  {
+    name: "CPI Data Pipeline Modernisation",
+    code: "MOSPI-CPI-2025",
+    ministry: "Ministry of Statistics and Programme Implementation",
+    sector: "Statistics & IT systems",
+    state: "All India / Multi-state",
+    original_cost: 142,
+    revised_cost: 168,
+    expenditure: 88,
+    original_end_date: "2026-06-30",
+    revised_end_date: "2026-09-30",
+    delay_reason: "coordination",
+    delay_notes: "Centre feed SLAs not signed with two source ministries.",
+    reported_physical_progress: 48,
+    previous_health_band: "watch",
+    issues: [
+      {
+        title: "Delayed centre feeds from two source agencies",
+        category: "coordination",
+        severity: "critical",
+        owner: "MoSPI CPI Division",
+        intervention: "Inter-ministerial data-sharing memo",
+        due_date: "2026-09-15",
+        status: "in_progress",
+      },
+    ],
+    interventions: [
+      {
+        action: "Issue SLA addendum for delayed centres and stand up exception alerts",
+        authority: "MoSPI",
+        assigned_officer: "Ishika Basu",
+        due_date: "2026-09-12",
+        priority: "high",
+        status: "open",
+      },
+    ],
+  },
+  {
+    name: "NSS Sample Frame Refresh",
+    code: "MOSPI-NSS-2025",
+    ministry: "Ministry of Statistics and Programme Implementation",
+    sector: "Statistics & IT systems",
+    state: "All India / Multi-state",
+    original_cost: 98,
+    revised_cost: 112,
+    expenditure: 41,
+    original_end_date: "2026-03-31",
+    revised_end_date: "2026-07-31",
+    delay_reason: "land_acquisition",
+    delay_notes: "Ward-boundary GIS join blocked where municipal layers are incomplete.",
+    reported_physical_progress: 40,
+    previous_health_band: "at_risk",
+    issues: [
+      {
+        title: "Municipal ward layers incomplete in three states",
+        category: "land_acquisition",
+        severity: "high",
+        owner: "State DES / ULBs",
+        intervention: "State-level GIS coordination",
+        due_date: "2026-09-25",
+        status: "open",
+      },
+    ],
+    interventions: [],
+  },
+  {
+    name: "e-Sankhyiki Portal Hardening",
+    code: "MOSPI-ESANK-2025",
+    ministry: "Ministry of Statistics and Programme Implementation",
+    sector: "Statistics & IT systems",
+    state: "Delhi",
+    original_cost: 64,
+    revised_cost: 64,
+    expenditure: 64,
+    original_end_date: "2025-12-15",
+    revised_end_date: "2025-12-15",
+    delay_reason: "",
+    delay_notes: "",
+    reported_physical_progress: 100,
+    previous_health_band: "on_track",
+    issues: [],
+    interventions: [],
+  },
+];
+
+function seedDecisionSupport() {
+  const now = new Date().toISOString();
+  const update = db.prepare(
+    `UPDATE projects SET code=?, ministry=?, sector=?, state=?, original_cost=?, revised_cost=?, expenditure=?,
+     original_end_date=?, revised_end_date=?, delay_reason=?, delay_notes=?, data_source='demo',
+     reported_physical_progress=?, previous_health_band=? WHERE name=?`
+  );
+  const insertIssue = db.prepare(
+    `INSERT INTO issues (project_id, title, category, severity, owner, intervention, due_date, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const insertIv = db.prepare(
+    `INSERT INTO interventions (project_id, issue_id, action, authority, assigned_officer, due_date, priority, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  for (const row of PORTFOLIO) {
+    const project = db.prepare("SELECT * FROM projects WHERE name = ?").get(row.name);
+    if (!project) continue;
+    update.run(
+      row.code,
+      row.ministry,
+      row.sector,
+      row.state,
+      row.original_cost,
+      row.revised_cost,
+      row.expenditure,
+      row.original_end_date,
+      row.revised_end_date,
+      row.delay_reason,
+      row.delay_notes,
+      row.reported_physical_progress,
+      row.previous_health_band,
+      row.name
+    );
+    const issueCount = db.prepare("SELECT COUNT(*) AS n FROM issues WHERE project_id = ?").get(project.id).n;
+    if (issueCount === 0) {
+      for (const issue of row.issues) {
+        const info = insertIssue.run(
+          project.id,
+          issue.title,
+          issue.category,
+          issue.severity,
+          issue.owner,
+          issue.intervention,
+          issue.due_date,
+          issue.status,
+          now
+        );
+        for (const iv of row.interventions) {
+          insertIv.run(
+            project.id,
+            info.lastInsertRowid,
+            iv.action,
+            iv.authority,
+            iv.assigned_officer,
+            iv.due_date,
+            iv.priority,
+            iv.status,
+            now
+          );
+        }
+      }
+    }
+  }
+}
+
 export function bootstrap() {
   remapLegacyDemoAccounts();
   enforceSingleAdmin();
@@ -173,11 +362,14 @@ export function bootstrap() {
     ids[u.email] = info.lastInsertRowid;
   }
   seedProjects(ids);
+  seedDecisionSupport();
   return { seeded: true };
 }
 
 export function seedIfEmpty() {
-  return bootstrap();
+  const result = bootstrap();
+  seedDecisionSupport();
+  return result;
 }
 
 if (process.argv[1]?.endsWith("seed.js")) {
