@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { Doughnut } from "react-chartjs-2";
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
 import { api } from "../api.js";
@@ -22,6 +22,7 @@ const emptyTask = {
 
 export default function ProjectDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [project, setProject] = useState(null);
   const [users, setUsers] = useState([]);
@@ -39,8 +40,10 @@ export default function ProjectDetail() {
 
   useEffect(() => {
     load();
-    api("/api/users").then(setUsers).catch(() => {});
-  }, [id]);
+    if (user.role === "admin" || user.role === "project_manager") {
+      api("/api/users").then(setUsers).catch(() => {});
+    }
+  }, [id, user.role]);
 
   const canManage = useMemo(() => {
     if (!project) return false;
@@ -98,7 +101,38 @@ export default function ProjectDetail() {
           <h2 className="font-serif mt-1 text-3xl">{project.name}</h2>
           <p className="mt-2 max-w-2xl text-sm text-ink/65">{project.description}</p>
         </div>
-        <StatusPill status={project.computed_status} />
+        <div className="flex flex-col items-end gap-2">
+          <StatusPill status={project.computed_status} />
+          {canManage ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                className="rounded border border-sand bg-white px-2 py-1 text-sm"
+                value={project.status}
+                onChange={(e) =>
+                  api(`/api/projects/${id}`, {
+                    method: "PUT",
+                    body: JSON.stringify({ ...project, status: e.target.value }),
+                  }).then(load)
+                }
+              >
+                <option value="planning">Planning</option>
+                <option value="active">Active</option>
+                <option value="on_hold">On hold</option>
+                <option value="completed">Completed</option>
+              </select>
+              <button
+                type="button"
+                className="text-sm text-accent hover:underline"
+                onClick={async () => {
+                  await api(`/api/projects/${id}`, { method: "DELETE" });
+                  navigate("/projects");
+                }}
+              >
+                Remove project
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <InsightBanner insight={project.insights?.headline} />
@@ -196,7 +230,7 @@ export default function ProjectDetail() {
               </thead>
               <tbody>
                 {project.tasks.map((t) => {
-                  const canEdit = canManage || t.assignee_id === user.id;
+                  const canEdit = canManage;
                   return (
                     <tr key={t.id} className="border-t border-sand">
                       <td className="px-4 py-3">

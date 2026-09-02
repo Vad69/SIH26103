@@ -4,16 +4,16 @@ import { useAuth } from "../auth.jsx";
 import { Field, inputClass } from "../components/ui.jsx";
 
 const demos = [
-  { role: "Admin", email: "admin@mospi.gov.in", password: "admin123" },
-  { role: "Project manager", email: "pm@mospi.gov.in", password: "pm123" },
-  { role: "Team member", email: "member@mospi.gov.in", password: "member123" },
+  { role: "Vardaan · Admin", email: "vardaan@mospi.gov.in", password: "vardaan123" },
+  { role: "Ishika Basu · Project manager", email: "ishika@mospi.gov.in", password: "ishika123" },
+  { role: "Disha Ghosh · Member", email: "disha@mospi.gov.in", password: "disha123" },
 ];
 
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("admin@mospi.gov.in");
-  const [password, setPassword] = useState("admin123");
+  const [email, setEmail] = useState("vardaan@mospi.gov.in");
+  const [password, setPassword] = useState("vardaan123");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -63,7 +63,7 @@ export default function Login() {
         <div className="w-full max-w-md">
           <p className="text-xs tracking-[0.22em] text-ink/50 uppercase lg:hidden">MoSPI · SIH26103</p>
           <h2 className="font-serif mt-2 text-3xl">Sign in to Pragati</h2>
-          <p className="mt-2 text-sm text-ink/60">Use a seeded demo account, or any credentials created in this workspace.</p>
+          <p className="mt-2 text-sm text-ink/60">Sign in with your account. Demo credentials for the hackathon are listed below.</p>
 
           <form onSubmit={onSubmit} className="mt-8 space-y-4">
             <Field label="Email">
