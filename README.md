@@ -13,7 +13,9 @@ Login → Dashboard → Projects → Project details
                          └── Progress / reports
 ```
 
-The “intelligent” piece is a small, explainable check — for example *“Project is likely to be delayed because 3 critical tasks are overdue.”* — not a custom ML model.
+The “intelligent” piece is a **Project Risk Intelligence Engine** — explainable scores for schedule, physical progress, finance, milestones and critical tasks. It produces early warnings and recommended interventions. It is not a trained ML model.
+
+The product is framed as a **decision-support / accountability layer** (cost & time overrun, delay reasons, issues, interventions, audit, monthly brief), not a generic task board.
 
 ## Stack
 
