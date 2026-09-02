@@ -8,9 +8,9 @@ const links = [
 ];
 
 function roleLabel(role) {
-  if (role === "admin") return "Administrator";
+  if (role === "admin") return "Admin";
   if (role === "project_manager") return "Project manager";
-  return "Team member";
+  return "Member";
 }
 
 export default function Layout() {
@@ -41,6 +41,18 @@ export default function Layout() {
                 {l.label}
               </NavLink>
             ))}
+            {user.role === "admin" ? (
+              <NavLink
+                to="/users"
+                className={({ isActive }) =>
+                  `rounded-md px-3 py-2 text-sm ${
+                    isActive ? "bg-white/10 text-white" : "text-sand/80 hover:bg-white/5 hover:text-white"
+                  }`
+                }
+              >
+                Users
+              </NavLink>
+            ) : null}
           </nav>
           <div className="border-t border-white/10 p-4 text-sm">
             <p className="font-medium text-white">{user.name}</p>
@@ -76,6 +88,16 @@ export default function Layout() {
                 {l.label}
               </NavLink>
             ))}
+            {user.role === "admin" ? (
+              <NavLink
+                to="/users"
+                className={({ isActive }) =>
+                  `whitespace-nowrap rounded-full px-3 py-1 text-sm ${isActive ? "bg-navy text-white" : "bg-white"}`
+                }
+              >
+                Users
+              </NavLink>
+            ) : null}
           </div>
           <main className="flex-1 p-4 md:p-8">
             <Outlet />

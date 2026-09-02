@@ -50,11 +50,17 @@ If a previous install left files locked on Windows (`EPERM`), close other termin
 
 ## Demo accounts
 
-| Role | Email | Password |
-| --- | --- | --- |
-| Admin | admin@mospi.gov.in | admin123 |
-| Project manager | pm@mospi.gov.in | pm123 |
-| Team member | member@mospi.gov.in | member123 |
+There is exactly **one Admin**. The login page does not create users. Vardaan adds members and project managers from **Users** after signing in.
+
+| Name | Role | Email | Password |
+| --- | --- | --- | --- |
+| Vardaan | Admin | vardaan@mospi.gov.in | vardaan123 |
+| Ishika Basu | Project manager | ishika@mospi.gov.in | ishika123 |
+| Disha Ghosh | Member (read-only) | disha@mospi.gov.in | disha123 |
+
+If you already ran an older seed, restart the server once: it remaps the previous demo emails to these accounts.
+
+Passwords are hashed with bcrypt. Role checks run on the API (members get **403** on create/edit/delete). The UI only hides buttons.
 
 Seed data includes four MoSPI-flavoured projects so the dashboard is not empty on first login.
 

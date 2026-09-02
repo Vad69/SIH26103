@@ -13,6 +13,7 @@ import db, {
 import { seedIfEmpty } from "./seed.js";
 import { analyzeProject } from "./insights.js";
 import { authRequired, requireRole, signToken } from "./auth.js";
+import { assertCanDeleteUser, normalizeCreatableRole } from "./rbac.js";
 
 seedIfEmpty();
 
@@ -53,9 +54,52 @@ app.get("/api/auth/me", authRequired, (req, res) => {
   res.json({ user: req.user });
 });
 
-app.get("/api/users", authRequired, (req, res) => {
+app.get("/api/users", authRequired, requireRole("admin", "project_manager"), (req, res) => {
   const rows = db.prepare("SELECT id, name, email, role FROM users ORDER BY name").all();
   res.json(rows);
+});
+
+app.post("/api/users", authRequired, requireRole("admin"), (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const password = String(req.body?.password || "");
+  const parsed = normalizeCreatableRole(req.body?.role);
+  if (!parsed.ok) return res.status(403).json({ error: parsed.error });
+  if (!name || !email || password.length < 6) {
+    return res.status(400).json({ error: "Name, email, and a password of at least 6 characters are required." });
+  }
+  const exists = db.prepare("SELECT id FROM users WHERE lower(email) = ?").get(email);
+  if (exists) return res.status(409).json({ error: "That email is already in use." });
+  try {
+    const info = db
+      .prepare("INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)")
+      .run(name, email, bcrypt.hashSync(password, 10), parsed.role);
+    const user = db.prepare("SELECT id, name, email, role FROM users WHERE id = ?").get(info.lastInsertRowid);
+    res.status(201).json(user);
+  } catch (err) {
+    const message = String(err?.message || err);
+    if (message.includes("users_single_admin") || message.includes("UNIQUE")) {
+      return res.status(403).json({ error: "A second Admin cannot be created." });
+    }
+    throw err;
+  }
+});
+
+app.delete("/api/users/:id", authRequired, requireRole("admin"), (req, res) => {
+  const id = parseId(req.params.id);
+  const target = db.prepare("SELECT * FROM users WHERE id = ?").get(id);
+  const allowed = assertCanDeleteUser(req.user, target);
+  if (!allowed.ok) return res.status(allowed.status).json({ error: allowed.error });
+  const managed = db.prepare("SELECT COUNT(*) AS n FROM projects WHERE manager_id = ?").get(id).n;
+  if (managed > 0) {
+    return res.status(400).json({
+      error: "This project manager still owns projects. Reassign or delete those projects first.",
+    });
+  }
+  db.prepare("DELETE FROM project_members WHERE user_id = ?").run(id);
+  db.prepare("UPDATE tasks SET assignee_id = NULL WHERE assignee_id = ?").run(id);
+  db.prepare("DELETE FROM users WHERE id = ?").run(id);
+  res.json({ ok: true });
 });
 
 app.get("/api/dashboard", authRequired, (req, res) => {
@@ -199,7 +243,7 @@ app.get("/api/projects/:id", authRequired, (req, res) => {
   res.json({ ...project, insights });
 });
 
-app.put("/api/projects/:id", authRequired, (req, res) => {
+app.put("/api/projects/:id", authRequired, requireRole("admin", "project_manager"), (req, res) => {
   const id = parseId(req.params.id);
   const row = projectOr404(id, res);
   if (!row) return;
@@ -218,7 +262,7 @@ app.put("/api/projects/:id", authRequired, (req, res) => {
   res.json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)));
 });
 
-app.delete("/api/projects/:id", authRequired, (req, res) => {
+app.delete("/api/projects/:id", authRequired, requireRole("admin", "project_manager"), (req, res) => {
   const id = parseId(req.params.id);
   const row = projectOr404(id, res);
   if (!row) return;
@@ -232,7 +276,7 @@ app.delete("/api/projects/:id", authRequired, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/api/projects/:id/members", authRequired, (req, res) => {
+app.post("/api/projects/:id/members", authRequired, requireRole("admin", "project_manager"), (req, res) => {
   const id = parseId(req.params.id);
   const row = projectOr404(id, res);
   if (!row) return;
@@ -244,7 +288,7 @@ app.post("/api/projects/:id/members", authRequired, (req, res) => {
   res.json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)));
 });
 
-app.delete("/api/projects/:id/members/:userId", authRequired, (req, res) => {
+app.delete("/api/projects/:id/members/:userId", authRequired, requireRole("admin", "project_manager"), (req, res) => {
   const id = parseId(req.params.id);
   const row = projectOr404(id, res);
   if (!row) return;
@@ -257,7 +301,7 @@ app.delete("/api/projects/:id/members/:userId", authRequired, (req, res) => {
   res.json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)));
 });
 
-app.post("/api/projects/:id/milestones", authRequired, (req, res) => {
+app.post("/api/projects/:id/milestones", authRequired, requireRole("admin", "project_manager"), (req, res) => {
   const id = parseId(req.params.id);
   const row = projectOr404(id, res);
   if (!row) return;
@@ -276,7 +320,7 @@ app.post("/api/projects/:id/milestones", authRequired, (req, res) => {
   res.status(201).json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)));
 });
 
-app.put("/api/milestones/:id", authRequired, (req, res) => {
+app.put("/api/milestones/:id", authRequired, requireRole("admin", "project_manager"), (req, res) => {
   const id = parseId(req.params.id);
   const milestone = db.prepare("SELECT * FROM milestones WHERE id = ?").get(id);
   if (!milestone) return res.status(404).json({ error: "Milestone not found." });
@@ -292,7 +336,7 @@ app.put("/api/milestones/:id", authRequired, (req, res) => {
   res.json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(milestone.project_id)));
 });
 
-app.post("/api/projects/:id/tasks", authRequired, (req, res) => {
+app.post("/api/projects/:id/tasks", authRequired, requireRole("admin", "project_manager"), (req, res) => {
   const id = parseId(req.params.id);
   const row = projectOr404(id, res);
   if (!row) return;
@@ -318,25 +362,21 @@ app.post("/api/projects/:id/tasks", authRequired, (req, res) => {
   res.status(201).json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)));
 });
 
-app.put("/api/tasks/:id", authRequired, (req, res) => {
+app.put("/api/tasks/:id", authRequired, requireRole("admin", "project_manager"), (req, res) => {
   const id = parseId(req.params.id);
   const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
   if (!task) return res.status(404).json({ error: "Task not found." });
-  const manager = canManageProject(req.user, task.project_id);
-  const assigned = task.assignee_id === req.user.id;
-  if (!manager && !assigned) {
-    return res.status(403).json({ error: "You can only update tasks assigned to you." });
+  if (!canManageProject(req.user, task.project_id)) {
+    return res.status(403).json({ error: "Members have read-only access and cannot change tasks or status." });
   }
 
   const next = { ...task };
-  if (manager) {
-    next.title = String(req.body?.title ?? task.title).trim();
-    next.description = String(req.body?.description ?? task.description);
-    next.milestone_id = req.body?.milestone_id === undefined ? task.milestone_id : req.body.milestone_id;
-    next.assignee_id = req.body?.assignee_id === undefined ? task.assignee_id : req.body.assignee_id;
-    next.due_date = String(req.body?.due_date ?? task.due_date);
-    next.priority = String(req.body?.priority ?? task.priority);
-  }
+  next.title = String(req.body?.title ?? task.title).trim();
+  next.description = String(req.body?.description ?? task.description);
+  next.milestone_id = req.body?.milestone_id === undefined ? task.milestone_id : req.body.milestone_id;
+  next.assignee_id = req.body?.assignee_id === undefined ? task.assignee_id : req.body.assignee_id;
+  next.due_date = String(req.body?.due_date ?? task.due_date);
+  next.priority = String(req.body?.priority ?? task.priority);
   next.status = String(req.body?.status ?? task.status);
   next.progress = Number(req.body?.progress ?? task.progress);
   if (next.status === "done") next.progress = 100;
