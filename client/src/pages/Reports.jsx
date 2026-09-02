@@ -83,6 +83,22 @@ export default function Reports() {
       </div>
 
       <Card>
+        <h3 className="font-medium">Top delay reasons</h3>
+        {data.delay_reasons?.length ? (
+          <ul className="mt-3 space-y-2 text-sm">
+            {data.delay_reasons.map((r) => (
+              <li key={r.id} className="flex justify-between">
+                <span>{r.label}</span>
+                <span>{r.count} projects</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-sm text-ink/50">No coded delay reasons yet.</p>
+        )}
+      </Card>
+
+      <Card>
         <h3 className="font-medium">Project summary</h3>
         <div className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[640px] text-left text-sm">

@@ -90,6 +90,73 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 `);
 
+function columnNames(table) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+}
+
+function addColumn(table, name, definition) {
+  if (!columnNames(table).includes(name)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+  }
+}
+
+addColumn("projects", "code", "TEXT DEFAULT ''");
+addColumn("projects", "ministry", "TEXT DEFAULT ''");
+addColumn("projects", "sector", "TEXT DEFAULT ''");
+addColumn("projects", "state", "TEXT DEFAULT ''");
+addColumn("projects", "original_cost", "REAL DEFAULT 0");
+addColumn("projects", "revised_cost", "REAL DEFAULT 0");
+addColumn("projects", "expenditure", "REAL DEFAULT 0");
+addColumn("projects", "original_end_date", "TEXT");
+addColumn("projects", "revised_end_date", "TEXT");
+addColumn("projects", "delay_reason", "TEXT DEFAULT ''");
+addColumn("projects", "delay_notes", "TEXT DEFAULT ''");
+
+db.exec(`
+UPDATE projects SET original_end_date = end_date WHERE original_end_date IS NULL OR original_end_date = '';
+UPDATE projects SET revised_end_date = end_date WHERE revised_end_date IS NULL OR revised_end_date = '';
+
+CREATE TABLE IF NOT EXISTS issues (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'other',
+  severity TEXT NOT NULL DEFAULT 'medium' CHECK (severity IN ('low', 'medium', 'high', 'critical')),
+  owner TEXT DEFAULT '',
+  intervention TEXT DEFAULT '',
+  due_date TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'resolved')),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS interventions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  issue_id INTEGER REFERENCES issues(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  authority TEXT DEFAULT '',
+  assigned_officer TEXT DEFAULT '',
+  due_date TEXT,
+  priority TEXT NOT NULL DEFAULT 'high' CHECK (priority IN ('medium', 'high', 'critical')),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'resolved')),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor_name TEXT NOT NULL,
+  action TEXT NOT NULL,
+  entity TEXT NOT NULL,
+  entity_id INTEGER,
+  project_id INTEGER,
+  detail TEXT DEFAULT '',
+  created_at TEXT NOT NULL
+);
+`);
+
+addColumn("audit_log", "project_id", "INTEGER");
+
 export function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -136,6 +203,10 @@ export function enrichProject(project) {
     )
     .all(project.id);
   const manager = publicUser(db.prepare("SELECT * FROM users WHERE id = ?").get(project.manager_id));
+  const issues = db.prepare("SELECT * FROM issues WHERE project_id = ? ORDER BY created_at DESC").all(project.id);
+  const interventions = db
+    .prepare("SELECT * FROM interventions WHERE project_id = ? ORDER BY created_at DESC")
+    .all(project.id);
   const progress = taskProgress(tasks);
   const delayedTasks = tasks.filter((t) => isOverdue(t.due_date, t.status === "done"));
   const computedStatus = projectStatusFromDates(project, progress);
@@ -146,6 +217,8 @@ export function enrichProject(project) {
     members,
     milestones,
     tasks,
+    issues,
+    interventions,
     progress,
     delayed_task_count: delayedTasks.length,
     computed_status: computedStatus,

@@ -9,7 +9,7 @@ import { Card, Field, InsightBanner, ProgressBar, StatusPill, inputClass } from 
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
-const tabs = ["Tasks", "Milestones", "Team", "Timeline", "Progress"];
+const tabs = ["Risk", "Finance", "Tasks", "Milestones", "Issues", "Interventions", "Team", "Timeline", "Audit"];
 
 const emptyTask = {
   title: "",
@@ -26,11 +26,14 @@ export default function ProjectDetail() {
   const { user } = useAuth();
   const [project, setProject] = useState(null);
   const [users, setUsers] = useState([]);
-  const [tab, setTab] = useState("Tasks");
+  const [tab, setTab] = useState("Risk");
   const [error, setError] = useState("");
   const [taskForm, setTaskForm] = useState(emptyTask);
   const [milestoneForm, setMilestoneForm] = useState({ title: "", due_date: "", status: "pending" });
   const [memberId, setMemberId] = useState("");
+  const [meta, setMeta] = useState({ delay_reasons: [] });
+  const [issueForm, setIssueForm] = useState({ title: "", category: "procurement", severity: "high", owner: "", intervention: "", due_date: "" });
+  const [ivForm, setIvForm] = useState({ action: "", authority: "", assigned_officer: "", due_date: "", priority: "high" });
 
   function load() {
     return api(`/api/projects/${id}`)
@@ -43,6 +46,7 @@ export default function ProjectDetail() {
     if (user.role === "admin" || user.role === "project_manager") {
       api("/api/users").then(setUsers).catch(() => {});
     }
+    api("/api/meta").then(setMeta).catch(() => {});
   }, [id, user.role]);
 
   const canManage = useMemo(() => {
@@ -135,7 +139,13 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      <InsightBanner insight={project.insights?.headline} />
+      <InsightBanner
+        insight={
+          project.insights?.health?.early_warning
+            ? { title: "Early warning", severity: "high", message: project.insights.health.early_warning_text }
+            : project.insights?.headline
+        }
+      />
 
       <div className="grid gap-4 sm:grid-cols-4">
         <Card>
@@ -413,6 +423,244 @@ export default function ProjectDetail() {
             </ul>
           </Card>
         </div>
+      ) : null}
+
+      {tab === "Risk" ? (
+        <div className="space-y-4">
+          <Card>
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-xs tracking-wide text-ink/50 uppercase">Project health score</p>
+                <p className="font-serif mt-1 text-5xl">{project.insights.health.score} / 100</p>
+              </div>
+              <StatusPill status={project.insights.health.band} />
+            </div>
+            <p className="mt-4 text-sm font-medium">{project.insights.health.intervention}</p>
+            <div className="mt-4 grid gap-2 sm:grid-cols-5 text-sm">
+              {Object.entries(project.insights.health.factors).map(([k, v]) => (
+                <div key={k} className="rounded-lg bg-paper p-3">
+                  <p className="text-xs text-ink/50 capitalize">{k.replaceAll("_", " ")}</p>
+                  <p className="font-serif text-2xl">{v}</p>
+                </div>
+              ))}
+            </div>
+          </Card>
+          <Card>
+            <h3 className="font-medium">Why is this project at risk?</h3>
+            <ul className="mt-3 space-y-2 text-sm">
+              {project.insights.health.reasons.map((r) => (
+                <li key={r.text}>• {r.text}</li>
+              ))}
+              {!project.insights.health.reasons.length ? <li>No material slippage indicators.</li> : null}
+            </ul>
+          </Card>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <h3 className="font-medium">Planned vs actual physical progress</h3>
+              <p className="mt-2 text-sm">Planned {project.insights.finance.planned_physical}% · Actual {project.progress}%</p>
+              <p className="text-sm text-ink/60">Schedule variance {project.insights.schedule_variance}%</p>
+              <div className="mt-3"><ProgressBar value={project.progress} /></div>
+            </Card>
+            <Card>
+              <h3 className="font-medium">Task mix</h3>
+              <div className="mx-auto mt-4 h-48 max-w-xs">
+                <Doughnut
+                  data={{
+                    labels: ["To do", "In progress", "Done"],
+                    datasets: [{ data: [statusCounts.todo, statusCounts.in_progress, statusCounts.done], backgroundColor: ["#cfc6b6", "#16345c", "#1f6f6a"], borderWidth: 0 }],
+                  }}
+                  options={{ plugins: { legend: { position: "bottom" } } }}
+                />
+              </div>
+            </Card>
+          </div>
+        </div>
+      ) : null}
+
+      {tab === "Finance" ? (
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Card><p className="text-xs text-ink/50 uppercase">Original approved cost</p><p className="font-serif mt-1 text-2xl">₹{project.insights.finance.original_cost} Cr</p></Card>
+            <Card><p className="text-xs text-ink/50 uppercase">Latest revised cost</p><p className="font-serif mt-1 text-2xl">₹{project.insights.finance.revised_cost} Cr</p></Card>
+            <Card><p className="text-xs text-ink/50 uppercase">Cumulative expenditure</p><p className="font-serif mt-1 text-2xl">₹{project.insights.finance.expenditure} Cr</p></Card>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Card><p className="text-xs text-ink/50 uppercase">Cost overrun</p><p className="font-serif mt-1 text-2xl">{project.insights.finance.cost_overrun_pct}%</p></Card>
+            <Card><p className="text-xs text-ink/50 uppercase">Financial progress</p><p className="font-serif mt-1 text-2xl">{project.insights.finance.financial_progress}%</p></Card>
+            <Card><p className="text-xs text-ink/50 uppercase">Time overrun</p><p className="font-serif mt-1 text-2xl">{project.insights.finance.time_overrun_days} days</p></Card>
+          </div>
+          <Card>
+            <p className="text-sm">Expected expenditure ₹{project.insights.finance.expected_expenditure} Cr · Actual ₹{project.insights.finance.expenditure} Cr · Variance ₹{project.insights.finance.expenditure_variance} Cr</p>
+            <p className="mt-2 text-sm text-ink/60">Original completion {project.insights.finance.original_end} · Revised {project.insights.finance.revised_end}</p>
+          </Card>
+          {canManage ? (
+            <Card>
+              <h3 className="font-medium">Update financials & delay reason</h3>
+              <form
+                className="mt-3 grid gap-3 md:grid-cols-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const fd = new FormData(e.target);
+                  api(`/api/projects/${id}`, {
+                    method: "PUT",
+                    body: JSON.stringify({
+                      ...project,
+                      original_cost: fd.get("original_cost"),
+                      revised_cost: fd.get("revised_cost"),
+                      expenditure: fd.get("expenditure"),
+                      original_end_date: fd.get("original_end_date"),
+                      revised_end_date: fd.get("revised_end_date"),
+                      delay_reason: fd.get("delay_reason"),
+                      delay_notes: fd.get("delay_notes"),
+                    }),
+                  }).then(load);
+                }}
+              >
+                <Field label="Original cost (₹ Cr)"><input name="original_cost" type="number" step="0.01" defaultValue={project.original_cost} className={inputClass} /></Field>
+                <Field label="Revised cost (₹ Cr)"><input name="revised_cost" type="number" step="0.01" defaultValue={project.revised_cost} className={inputClass} /></Field>
+                <Field label="Expenditure (₹ Cr)"><input name="expenditure" type="number" step="0.01" defaultValue={project.expenditure} className={inputClass} /></Field>
+                <Field label="Original completion"><input name="original_end_date" type="date" defaultValue={project.original_end_date || project.end_date} className={inputClass} /></Field>
+                <Field label="Revised completion"><input name="revised_end_date" type="date" defaultValue={project.revised_end_date || project.end_date} className={inputClass} /></Field>
+                <Field label="Reason for delay">
+                  <select name="delay_reason" defaultValue={project.delay_reason || ""} className={inputClass}>
+                    <option value="">None recorded</option>
+                    {meta.delay_reasons.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                  </select>
+                </Field>
+                <div className="md:col-span-2">
+                  <Field label="Additional explanation"><textarea name="delay_notes" defaultValue={project.delay_notes} className={inputClass} rows={2} /></Field>
+                </div>
+                <button className="rounded-md bg-navy px-4 py-2 text-sm text-white" type="submit">Save financials</button>
+              </form>
+            </Card>
+          ) : null}
+        </div>
+      ) : null}
+
+      {tab === "Issues" ? (
+        <div className="space-y-4">
+          {canManage ? (
+            <Card>
+              <h3 className="font-medium">Log a bottleneck</h3>
+              <form
+                className="mt-3 grid gap-3 md:grid-cols-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  api(`/api/projects/${id}/issues`, { method: "POST", body: JSON.stringify(issueForm) }).then(() => {
+                    setIssueForm({ title: "", category: "procurement", severity: "high", owner: "", intervention: "", due_date: "" });
+                    load();
+                  });
+                }}
+              >
+                <Field label="Issue"><input className={inputClass} value={issueForm.title} onChange={(e) => setIssueForm({ ...issueForm, title: e.target.value })} required /></Field>
+                <Field label="Category">
+                  <select className={inputClass} value={issueForm.category} onChange={(e) => setIssueForm({ ...issueForm, category: e.target.value })}>
+                    {meta.delay_reasons.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Severity">
+                  <select className={inputClass} value={issueForm.severity} onChange={(e) => setIssueForm({ ...issueForm, severity: e.target.value })}>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </Field>
+                <Field label="Owner / ministry"><input className={inputClass} value={issueForm.owner} onChange={(e) => setIssueForm({ ...issueForm, owner: e.target.value })} /></Field>
+                <Field label="Required intervention"><input className={inputClass} value={issueForm.intervention} onChange={(e) => setIssueForm({ ...issueForm, intervention: e.target.value })} /></Field>
+                <Field label="Deadline"><input type="date" className={inputClass} value={issueForm.due_date} onChange={(e) => setIssueForm({ ...issueForm, due_date: e.target.value })} /></Field>
+                <button className="rounded-md bg-navy px-4 py-2 text-sm text-white" type="submit">Save issue</button>
+              </form>
+            </Card>
+          ) : null}
+          {(project.issues || []).map((issue) => (
+            <Card key={issue.id} className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="font-medium">{issue.title}</p>
+                <p className="text-sm text-ink/60">{issue.owner} · due {issue.due_date || "—"}</p>
+                <p className="mt-1 text-sm">{issue.intervention}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <StatusPill status={issue.severity} />
+                {canManage ? (
+                  <select className="rounded border border-sand px-2 py-1 text-sm" value={issue.status} onChange={(e) => api(`/api/issues/${issue.id}`, { method: "PUT", body: JSON.stringify({ ...issue, status: e.target.value }) }).then(load)}>
+                    <option value="open">Open</option>
+                    <option value="in_progress">In progress</option>
+                    <option value="resolved">Resolved</option>
+                  </select>
+                ) : (
+                  <StatusPill status={issue.status} />
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : null}
+
+      {tab === "Interventions" ? (
+        <div className="space-y-4">
+          {canManage ? (
+            <Card>
+              <h3 className="font-medium">Create intervention</h3>
+              <form
+                className="mt-3 grid gap-3 md:grid-cols-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  api(`/api/projects/${id}/interventions`, { method: "POST", body: JSON.stringify(ivForm) }).then(() => {
+                    setIvForm({ action: "", authority: "", assigned_officer: "", due_date: "", priority: "high" });
+                    load();
+                  });
+                }}
+              >
+                <div className="md:col-span-2">
+                  <Field label="Action required"><input className={inputClass} value={ivForm.action} onChange={(e) => setIvForm({ ...ivForm, action: e.target.value })} required /></Field>
+                </div>
+                <Field label="Responsible authority"><input className={inputClass} value={ivForm.authority} onChange={(e) => setIvForm({ ...ivForm, authority: e.target.value })} /></Field>
+                <Field label="Assigned officer"><input className={inputClass} value={ivForm.assigned_officer} onChange={(e) => setIvForm({ ...ivForm, assigned_officer: e.target.value })} /></Field>
+                <Field label="Target resolution"><input type="date" className={inputClass} value={ivForm.due_date} onChange={(e) => setIvForm({ ...ivForm, due_date: e.target.value })} /></Field>
+                <Field label="Priority">
+                  <select className={inputClass} value={ivForm.priority} onChange={(e) => setIvForm({ ...ivForm, priority: e.target.value })}>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </Field>
+                <button className="rounded-md bg-navy px-4 py-2 text-sm text-white" type="submit">Assign intervention</button>
+              </form>
+            </Card>
+          ) : null}
+          {(project.interventions || []).map((iv) => (
+            <Card key={iv.id} className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="font-medium">{iv.action}</p>
+                <p className="text-sm text-ink/60">{iv.authority} · {iv.assigned_officer} · {iv.due_date || "no date"}</p>
+              </div>
+              {canManage ? (
+                <select className="rounded border border-sand px-2 py-1 text-sm" value={iv.status} onChange={(e) => api(`/api/interventions/${iv.id}`, { method: "PUT", body: JSON.stringify({ ...iv, status: e.target.value }) }).then(load)}>
+                  <option value="open">Open</option>
+                  <option value="in_progress">In progress</option>
+                  <option value="resolved">Resolved</option>
+                </select>
+              ) : (
+                <StatusPill status={iv.status} />
+              )}
+            </Card>
+          ))}
+        </div>
+      ) : null}
+
+      {tab === "Audit" ? (
+        <Card>
+          <h3 className="font-medium">Activity log</h3>
+          <ul className="mt-3 divide-y divide-sand text-sm">
+            {(project.audit || []).map((a) => (
+              <li key={a.id} className="py-2">
+                <p className="font-medium">{a.actor_name} · {a.action}</p>
+                <p className="text-ink/50">{new Date(a.created_at).toLocaleString()} · {a.detail}</p>
+              </li>
+            ))}
+            {!project.audit?.length ? <li className="py-2 text-ink/50">No recorded changes yet.</li> : null}
+          </ul>
+        </Card>
       ) : null}
     </div>
   );

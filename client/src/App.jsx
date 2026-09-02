@@ -7,6 +7,8 @@ import Projects from "./pages/Projects.jsx";
 import ProjectDetail from "./pages/ProjectDetail.jsx";
 import Reports from "./pages/Reports.jsx";
 import Users from "./pages/Users.jsx";
+import Briefing from "./pages/Briefing.jsx";
+import ImportPage from "./pages/Import.jsx";
 
 function Guard({ children }) {
   const { user, loading } = useAuth();
@@ -38,6 +40,8 @@ export default function App() {
         <Route path="projects" element={<Projects />} />
         <Route path="projects/:id" element={<ProjectDetail />} />
         <Route path="reports" element={<Reports />} />
+        <Route path="briefing" element={<Briefing />} />
+        <Route path="import" element={<ImportPage />} />
         <Route path="users" element={<Users />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
