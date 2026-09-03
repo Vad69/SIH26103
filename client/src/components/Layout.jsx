@@ -6,6 +6,9 @@ const links = [
   { to: "/projects", label: "Projects" },
   { to: "/reports", label: "Reports" },
   { to: "/briefing", label: "Monthly brief" },
+  { to: "/flash", label: "Flash report" },
+  { to: "/qpisr", label: "QPISR" },
+  { to: "/alerts", label: "Alerts" },
 ];
 
 function roleLabel(role) {

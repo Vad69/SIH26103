@@ -117,6 +117,7 @@ addColumn("projects", "reported_physical_progress", "REAL");
 addColumn("projects", "health_band", "TEXT DEFAULT ''");
 addColumn("projects", "health_score", "INTEGER");
 addColumn("projects", "previous_health_band", "TEXT DEFAULT ''");
+addColumn("projects", "funds_released", "REAL DEFAULT 0");
 
 db.exec(`
 UPDATE projects SET original_end_date = end_date WHERE original_end_date IS NULL OR original_end_date = '';
@@ -164,6 +165,48 @@ CREATE TABLE IF NOT EXISTS audit_log (
 addColumn("audit_log", "project_id", "INTEGER");
 addColumn("audit_log", "prev_value", "TEXT DEFAULT ''");
 addColumn("audit_log", "new_value", "TEXT DEFAULT ''");
+addColumn("issues", "suggested_category", "TEXT");
+addColumn("issues", "nlp_confidence", "REAL");
+addColumn("issues", "nlp_version", "TEXT");
+addColumn("issues", "nlp_accepted_category", "TEXT");
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS preconstructions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'statutory',
+  status TEXT NOT NULL DEFAULT 'not_started',
+  planned_completion TEXT,
+  actual_completion TEXT,
+  authority TEXT DEFAULT '',
+  delay_reason TEXT DEFAULT '',
+  remarks TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS alerts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  title TEXT NOT NULL,
+  explanation TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  read_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS quick_updates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  reported_progress REAL,
+  status TEXT,
+  blocker TEXT DEFAULT '',
+  remarks TEXT DEFAULT '',
+  suggested_category TEXT,
+  created_at TEXT NOT NULL,
+  user_id INTEGER
+);
+`);
 
 export function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -215,6 +258,9 @@ export function enrichProject(project) {
   const interventions = db
     .prepare("SELECT * FROM interventions WHERE project_id = ? ORDER BY created_at DESC")
     .all(project.id);
+  const preconstructions = db
+    .prepare("SELECT * FROM preconstructions WHERE project_id = ? ORDER BY planned_completion")
+    .all(project.id);
   const progress = taskProgress(tasks);
   const delayedTasks = tasks.filter((t) => isOverdue(t.due_date, t.status === "done"));
   const computedStatus = projectStatusFromDates(project, progress);
@@ -227,6 +273,7 @@ export function enrichProject(project) {
     tasks,
     issues,
     interventions,
+    preconstructions,
     progress,
     delayed_task_count: delayedTasks.length,
     computed_status: computedStatus,

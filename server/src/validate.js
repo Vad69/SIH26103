@@ -2,18 +2,28 @@ export function validateProjectNumbers(fields, existing = {}) {
   const original = Number(fields.original_cost);
   const revised = Number(fields.revised_cost);
   const expenditure = Number(fields.expenditure);
+  const released =
+    fields.funds_released === undefined || fields.funds_released === ""
+      ? Number(existing.funds_released ?? 0)
+      : Number(fields.funds_released);
   const reported = fields.reported_physical_progress;
   const notes = String(fields.delay_notes || "").trim();
 
   if ([original, revised, expenditure].some((n) => Number.isNaN(n))) {
     return "Cost and expenditure must be numbers.";
   }
-  if (original < 0 || revised < 0 || expenditure < 0) {
-    return "Costs and expenditure cannot be negative.";
+  if (fields.funds_released !== undefined && fields.funds_released !== "" && Number.isNaN(released)) {
+    return "Funds released must be a number.";
+  }
+  if (original < 0 || revised < 0 || expenditure < 0 || released < 0) {
+    return "Costs, funds released and expenditure cannot be negative.";
   }
   const ceiling = revised > 0 ? revised : original;
   if (ceiling > 0 && expenditure > ceiling) {
     return "Expenditure cannot exceed the latest revised cost (or original cost if no revision).";
+  }
+  if (ceiling > 0 && released > ceiling) {
+    return "Funds released cannot exceed the latest revised cost (or original cost if no revision).";
   }
   if (revised > 0 && original > 0 && revised < original && !notes) {
     return "If revised cost is lower than original approved cost, record an explanation in delay notes.";

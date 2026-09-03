@@ -168,7 +168,40 @@ const PORTFOLIO = [
     delay_reason: "procurement",
     delay_notes: "State tablet tenders slipped two cycles.",
     reported_physical_progress: 34,
+    funds_released: 110,
     previous_health_band: "watch",
+    preconstructions: [
+      {
+        name: "State tablet tender / contract approval",
+        category: "procurement",
+        status: "delayed",
+        planned_completion: "2026-04-30",
+        actual_completion: "",
+        authority: "State DES",
+        delay_reason: "procurement",
+        remarks: "Two tender cycles slipped; inventory still incomplete.",
+      },
+      {
+        name: "Field protocol statutory sign-off",
+        category: "statutory",
+        status: "in_progress",
+        planned_completion: "2026-06-15",
+        actual_completion: "",
+        authority: "MoSPI",
+        delay_reason: "",
+        remarks: "",
+      },
+      {
+        name: "Site / training-centre readiness (East zone)",
+        category: "site_readiness",
+        status: "blocked",
+        planned_completion: "2026-05-01",
+        actual_completion: "",
+        authority: "State DES",
+        delay_reason: "procurement",
+        remarks: "Blocked until tablets arrive.",
+      },
+    ],
     issues: [
       {
         title: "Tablet inventory stuck in state procurement",
@@ -205,7 +238,20 @@ const PORTFOLIO = [
     delay_reason: "coordination",
     delay_notes: "Centre feed SLAs not signed with two source ministries.",
     reported_physical_progress: 48,
+    funds_released: 102,
     previous_health_band: "watch",
+    preconstructions: [
+      {
+        name: "Inter-ministerial data-sharing approval",
+        category: "statutory",
+        status: "delayed",
+        planned_completion: "2026-02-28",
+        actual_completion: "",
+        authority: "MoSPI CPI Division",
+        delay_reason: "coordination",
+        remarks: "SLA addendum still unsigned.",
+      },
+    ],
     issues: [
       {
         title: "Delayed centre feeds from two source agencies",
@@ -242,7 +288,20 @@ const PORTFOLIO = [
     delay_reason: "land_acquisition",
     delay_notes: "Ward-boundary GIS join blocked where municipal layers are incomplete.",
     reported_physical_progress: 40,
+    funds_released: 52,
     previous_health_band: "at_risk",
+    preconstructions: [
+      {
+        name: "Municipal ward-layer access (three states)",
+        category: "land_acquisition",
+        status: "blocked",
+        planned_completion: "2026-01-31",
+        actual_completion: "",
+        authority: "State DES / ULBs",
+        delay_reason: "land_acquisition",
+        remarks: "GIS layers incomplete.",
+      },
+    ],
     issues: [
       {
         title: "Municipal ward layers incomplete in three states",
@@ -270,7 +329,20 @@ const PORTFOLIO = [
     delay_reason: "",
     delay_notes: "",
     reported_physical_progress: 100,
+    funds_released: 64,
     previous_health_band: "on_track",
+    preconstructions: [
+      {
+        name: "Security / accessibility UAT sign-off",
+        category: "statutory",
+        status: "completed",
+        planned_completion: "2025-11-30",
+        actual_completion: "2025-11-30",
+        authority: "MoSPI",
+        delay_reason: "",
+        remarks: "Completed with portal hardening.",
+      },
+    ],
     issues: [],
     interventions: [],
   },
@@ -281,7 +353,7 @@ function seedDecisionSupport() {
   const update = db.prepare(
     `UPDATE projects SET code=?, ministry=?, sector=?, state=?, original_cost=?, revised_cost=?, expenditure=?,
      original_end_date=?, revised_end_date=?, delay_reason=?, delay_notes=?, data_source='demo',
-     reported_physical_progress=?, previous_health_band=? WHERE name=?`
+     reported_physical_progress=?, funds_released=?, previous_health_band=? WHERE name=?`
   );
   const insertIssue = db.prepare(
     `INSERT INTO issues (project_id, title, category, severity, owner, intervention, due_date, status, created_at)
@@ -307,6 +379,7 @@ function seedDecisionSupport() {
       row.delay_reason,
       row.delay_notes,
       row.reported_physical_progress,
+      row.funds_released ?? 0,
       row.previous_health_band,
       row.name
     );
@@ -337,6 +410,26 @@ function seedDecisionSupport() {
             now
           );
         }
+      }
+    }
+    const preconCount = db.prepare("SELECT COUNT(*) AS n FROM preconstructions WHERE project_id = ?").get(project.id).n;
+    if (preconCount === 0 && row.preconstructions) {
+      const insertPre = db.prepare(
+        `INSERT INTO preconstructions (project_id, name, category, status, planned_completion, actual_completion, authority, delay_reason, remarks)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      for (const c of row.preconstructions) {
+        insertPre.run(
+          project.id,
+          c.name,
+          c.category,
+          c.status,
+          c.planned_completion || null,
+          c.actual_completion || null,
+          c.authority || "",
+          c.delay_reason || "",
+          c.remarks || ""
+        );
       }
     }
   }

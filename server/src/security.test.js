@@ -145,4 +145,41 @@ test("write endpoints enforce Admin / PM / Member rules", async (t) => {
     },
   });
   assert.equal(badFinance.status, 400);
+
+  const memberPrecon = await req(`/api/projects/${ownId}/preconstructions`, {
+    method: "POST",
+    token: member,
+    body: { name: "EC", category: "environmental_clearance" },
+  });
+  assert.equal(memberPrecon.status, 403);
+
+  const memberQuick = await req(`/api/projects/${ownId}/quick-update`, {
+    method: "POST",
+    token: member,
+    body: { blocker: "no funds released this month" },
+  });
+  assert.equal(memberQuick.status, 403);
+
+  const adminPrecon = await req(`/api/projects/${ownId}/preconstructions`, {
+    method: "POST",
+    token: admin,
+    body: { name: "Environmental Clearance", category: "environmental_clearance", status: "delayed", planned_completion: "2026-03-01" },
+  });
+  assert.equal(adminPrecon.status, 201);
+
+  const nlp = await req("/api/nlp/classify", {
+    method: "POST",
+    token: admin,
+    body: { text: "Environmental approval has not arrived and construction cannot proceed." },
+  });
+  assert.equal(nlp.status, 200);
+  assert.equal(nlp.data.category, "environmental_clearance");
+
+  const flash = await req("/api/reports/flash", { token: pm });
+  assert.equal(flash.status, 200);
+  assert.equal(flash.data.official, false);
+  assert.ok(flash.data.projects.every((p) => p.id !== adminProjectId));
+
+  const pdf = await req("/api/reports/flash.pdf", { token: admin });
+  assert.equal(pdf.status, 200);
 });
