@@ -59,7 +59,7 @@ export function buildOutlook({
           confidence_band: topNlp.confidence_band,
           explanation: topNlp.explanation,
           source:
-            "AI-assisted classification on issue/delay/resource/lifecycle text (synthetic-trained prototype). Manual category stays authoritative until accepted.",
+            "Prototype NLP classification on issue/delay/resource/lifecycle text (synthetic-trained). Manual category stays authoritative until accepted.",
         }
       : project?.delay_reason
         ? {
