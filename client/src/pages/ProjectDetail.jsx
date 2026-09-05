@@ -525,7 +525,7 @@ export default function ProjectDetail() {
             </ul>
             {project.insights?.outlook?.bottleneck ? (
               <div className="mt-4 rounded-lg bg-paper p-3 text-sm">
-                <p className="font-medium">AI-assisted bottleneck (suggestion)</p>
+                <p className="font-medium">Prototype NLP bottleneck (synthetic phrases — suggestion only)</p>
                 <p>{project.insights.outlook.bottleneck.label} · confidence {project.insights.outlook.bottleneck.confidence_band}
                   {project.insights.outlook.bottleneck.confidence != null ? ` (${Math.round(project.insights.outlook.bottleneck.confidence * 100)}%)` : ""}</p>
                 <p className="mt-1 text-xs text-ink/60">{project.insights.outlook.bottleneck.explanation}</p>
@@ -1120,6 +1120,7 @@ export default function ProjectDetail() {
           {canManage ? (
             <Card>
               <h3 className="font-medium">Create intervention</h3>
+              <p className="mt-1 text-xs text-ink/50">This is a decision/action record. Saving it does not change live health or forecast.</p>
               <form
                 className="mt-3 grid gap-3 md:grid-cols-2"
                 onSubmit={(e) => {
@@ -1154,7 +1155,7 @@ export default function ProjectDetail() {
             </Card>
           ) : null}
           {!(project.interventions || []).length ? (
-            <Card><p className="text-sm text-ink/50">No active interventions.</p></Card>
+            <Card><p className="text-sm text-ink/50">No intervention records yet.</p></Card>
           ) : null}
           {(project.interventions || []).map((iv) => (
             <Card key={iv.id} className="space-y-3">

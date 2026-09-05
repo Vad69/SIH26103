@@ -212,6 +212,12 @@ test("intervention validation and status transitions", () => {
   assert.equal(done.outcome, "Kits delivered");
   const cancelled = interventionWriteFields({ status: "cancelled" }, { action: "Escalate", status: "open" });
   assert.equal(cancelled.status, "cancelled");
+  const reopened = interventionWriteFields(
+    { status: "in_progress", completed_at: "2026-09-01T00:00:00.000Z", outcome: "" },
+    { action: "Escalate", status: "resolved", completed_at: "2026-09-01T00:00:00.000Z" }
+  );
+  assert.equal(reopened.status, "in_progress");
+  assert.equal(reopened.completed_at, null);
 });
 
 test("executive board prioritises critical projects and handles no history", () => {

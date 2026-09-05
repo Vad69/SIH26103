@@ -102,7 +102,7 @@ export default function DecisionBoard() {
         <p className="text-xs tracking-[0.2em] text-ink/45 uppercase">Executive view</p>
         <h2 className="font-serif mt-1 text-3xl">Which projects require my attention?</h2>
         <p className="mt-2 max-w-3xl text-sm text-ink/65">
-          Scannable priority list. Health is rule-based; slippage is a prototype forecast, not a guaranteed date.
+          Management view: which projects to look at first, and why. Health is rule-based; slippage is a prototype forecast, not a guaranteed date. Open a row, then Outlook for What changed / What-if, Interventions to record action, Decisions for history.
         </p>
       </div>
 
@@ -140,6 +140,7 @@ export default function DecisionBoard() {
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <Link to={`/projects/${p.id}`} className="font-medium hover:underline">{p.name}</Link>
+                      <p className="text-xs text-ink/45">Opens on Outlook (health, What changed, What-if)</p>
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
                         <StatusPill status={p.health_band} />
                         <span>Health {p.health_score} ({trendWords(p.trend)})</span>

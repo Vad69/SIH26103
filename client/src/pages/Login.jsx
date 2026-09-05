@@ -41,10 +41,10 @@ export default function Login() {
         <div className="relative">
           <p className="text-xs tracking-[0.28em] text-sand/70 uppercase">Ministry of Statistics and Programme Implementation</p>
           <h1 className="font-serif mt-6 max-w-md text-5xl leading-tight text-white">
-            One desk for every project that still has a deadline.
+            Which projects need an officer decision now?
           </h1>
           <p className="mt-6 max-w-md text-sand/80">
-            SIH26103 — a prototype decision-support layer inspired by government project-monitoring workflows (PAIMANA-aligned concepts). Seeded records are demo data, not live PAIMANA extracts.
+            SIH26103 / PRAGATI — a prototype decision-support layer: detect deterioration, explain it, test a scenario, record an intervention. PAIMANA-aligned concepts only. Seeded records are demo data, not live government extracts.
           </p>
         </div>
         <dl className="relative grid max-w-md grid-cols-2 gap-6 text-sm">

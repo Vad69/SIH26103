@@ -29,7 +29,7 @@ export default function Layout() {
           <div className="border-b border-white/10 px-5 py-6">
             <p className="text-[11px] tracking-[0.22em] text-sand/70 uppercase">MoSPI · SIH26103</p>
             <h1 className="font-serif mt-1 text-2xl text-white">Pragati</h1>
-            <p className="mt-1 text-sm text-sand/80">Decision support</p>
+            <p className="mt-1 text-sm text-sand/80">Which projects need a decision?</p>
           </div>
           <nav className="flex flex-1 flex-col gap-1 p-3">
             {links.map((l) => (

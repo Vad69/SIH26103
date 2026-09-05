@@ -94,7 +94,10 @@ export default function Dashboard() {
           <p className="text-xs tracking-[0.2em] text-ink/45 uppercase">MoSPI · SIH26103</p>
           <h2 className="font-serif mt-1 text-3xl">National monitoring command center</h2>
           <p className="mt-2 max-w-2xl text-sm text-ink/60">
-            Prototype decision-support using PAIMANA-aligned monitoring concepts (cost, time, milestones, delay reasons, interventions). Seeded projects are <strong>demo data</strong>. Indicators are calculated in this app — they are not official PAIMANA statistics.
+            Problem: statistical projects slip quietly until a review. PRAGATI shows which ones need attention, why health moved, and what was recorded. Seeded projects are <strong>demo data</strong>. Indicators are calculated here — not official PAIMANA statistics.
+          </p>
+          <p className="mt-2 max-w-2xl text-xs text-ink/50">
+            Judge path: Decision board → PLFS → Outlook (What changed / What-if) → intervention → Decisions timeline.
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
