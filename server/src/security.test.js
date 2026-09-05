@@ -182,4 +182,62 @@ test("write endpoints enforce Admin / PM / Member rules", async (t) => {
 
   const pdf = await req("/api/reports/flash.pdf", { token: admin });
   assert.equal(pdf.status, 200);
+
+  const detail = await req(`/api/projects/${ownId}`, { token: pm });
+  assert.equal(detail.status, 200);
+  assert.ok(detail.data.lifecycle_stages?.length >= 11);
+  assert.ok(detail.data.resources?.length >= 5);
+
+  const memberLife = await req(`/api/projects/${ownId}/lifecycle/tender`, {
+    method: "PUT",
+    token: member,
+    body: { status: "delayed" },
+  });
+  assert.equal(memberLife.status, 403);
+
+  const badLife = await req(`/api/projects/${ownId}/lifecycle/tender`, {
+    method: "PUT",
+    token: pm,
+    body: { status: "nope" },
+  });
+  assert.equal(badLife.status, 400);
+
+  const life = await req(`/api/projects/${ownId}/lifecycle/tender`, {
+    method: "PUT",
+    token: pm,
+    body: { status: "delayed", delay_reason: "Retender", planned_date: "2026-04-01" },
+  });
+  assert.equal(life.status, 200);
+  assert.equal(life.data.lifecycle_stages.find((s) => s.stage_key === "tender").status, "delayed");
+
+  const materials = await req(`/api/projects/${ownId}/resources/materials`, {
+    method: "PUT",
+    token: pm,
+    body: { status: "blocked", delay_reason: "Supplier delivery delay" },
+  });
+  assert.equal(materials.status, 200);
+
+  const commence = await req(`/api/projects/${ownId}`, {
+    method: "PUT",
+    token: pm,
+    body: {
+      name: life.data.name,
+      start_date: life.data.start_date,
+      end_date: life.data.end_date,
+      status: life.data.status,
+      original_cost: life.data.original_cost || 10,
+      revised_cost: life.data.revised_cost || 10,
+      expenditure: life.data.expenditure || 1,
+      planned_commencement_date: "2026-01-10",
+      actual_commencement_date: "2026-02-02",
+    },
+  });
+  assert.equal(commence.status, 200);
+  assert.equal(commence.data.commencement_delay_days, 23);
+  const after = await req(`/api/projects/${ownId}`, { token: pm });
+  assert.ok((after.data.audit || []).some((a) => /lifecycle|resource|updated project/i.test(a.action)));
+
+  const dash = await req("/api/dashboard", { token: admin });
+  assert.ok(dash.data.lifecycle_snapshot?.by_stage);
+  assert.ok(flash.data.projects[0].lifecycle_stage !== undefined);
 });

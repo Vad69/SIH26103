@@ -17,6 +17,21 @@ import { analyzeProject } from "./insights.js";
 import { authRequired, requireRole, signToken } from "./auth.js";
 import { assertCanDeleteUser, normalizeCreatableRole } from "./rbac.js";
 import { DELAY_REASONS, MINISTRIES, SECTORS, STATES, delayLabel, PRECON_CATEGORIES, PRECON_STATUSES } from "./constants.js";
+import {
+  LIFECYCLE_STAGES,
+  LIFECYCLE_STATUSES,
+  TENDER_STATUSES,
+  RESOURCE_CATEGORIES,
+  RESOURCE_STATUSES,
+  WBS_GROUPS,
+  SUPERVISION_TYPES,
+  isResourceCategory,
+  isStageKey,
+  snapshotCounts,
+  validateLifecyclePatch,
+  validateResourcePatch,
+  validateTenderStatus,
+} from "./lifecycle.js";
 import { logAudit, listAudit } from "./audit.js";
 import { parseCsv, toCsv } from "./csv.js";
 import { validateProjectNumbers } from "./validate.js";
@@ -58,11 +73,15 @@ function intel(project) {
     milestones: project.milestones || [],
     issues: project.issues || [],
     preconstructions: project.preconstructions || [],
+    lifecycle_stages: project.lifecycle_stages || [],
+    resources: project.resources || [],
   });
   const forecast = forecastProject({
     project,
     insights,
     preconstructions: project.preconstructions || [],
+    lifecycle_stages: project.lifecycle_stages || [],
+    resources: project.resources || [],
   });
   const outlook = buildOutlook({
     project,
@@ -71,6 +90,8 @@ function intel(project) {
     issues: project.issues || [],
     interventions: project.interventions || [],
     preconstructions: project.preconstructions || [],
+    lifecycle_stages: project.lifecycle_stages || [],
+    resources: project.resources || [],
   });
   return { ...insights, forecast, outlook };
 }
@@ -109,6 +130,8 @@ function loadVisible(user) {
           insights,
           forecast: insights.forecast,
           preconstructions: p.preconstructions || [],
+          lifecycle_stages: p.lifecycle_stages || [],
+          resources: p.resources || [],
         }),
       });
       return { ...p, insights };
@@ -122,6 +145,22 @@ function matchesFilters(p, q) {
   if (q.health && p.insights?.health?.band !== q.health) return false;
   if (q.status && p.computed_status !== q.status && p.status !== q.status) return false;
   return true;
+}
+
+function optText(body, existing, key) {
+  if (body[key] === undefined) return existing[key] ?? "";
+  return String(body[key] ?? "");
+}
+
+function optDate(body, existing, key) {
+  if (body[key] === undefined) return existing[key] ?? "";
+  if (body[key] === null || body[key] === "") return "";
+  return String(body[key]);
+}
+
+function optNum(body, existing, key) {
+  if (body[key] === undefined || body[key] === "") return Number(existing[key] ?? 0);
+  return Number(body[key]);
 }
 
 function projectWriteFields(body, existing = {}) {
@@ -154,7 +193,185 @@ function projectWriteFields(body, existing = {}) {
         ? existing.reported_physical_progress ?? null
         : Number(body.reported_physical_progress),
     data_source: existing.data_source || "manual",
+    tender_status: optText(body, existing, "tender_status") || "not_started",
+    tender_document_date: optDate(body, existing, "tender_document_date"),
+    tender_publication_date: optDate(body, existing, "tender_publication_date"),
+    bid_deadline: optDate(body, existing, "bid_deadline"),
+    evaluation_date: optDate(body, existing, "evaluation_date"),
+    tender_award_date: optDate(body, existing, "tender_award_date"),
+    contracting_agency: optText(body, existing, "contracting_agency"),
+    tender_contract_value: optNum(body, existing, "tender_contract_value"),
+    tender_remarks: optText(body, existing, "tender_remarks"),
+    tender_delay_reason: optText(body, existing, "tender_delay_reason"),
+    award_date: optDate(body, existing, "award_date"),
+    awarded_agency: optText(body, existing, "awarded_agency"),
+    award_contract_value: optNum(body, existing, "award_contract_value"),
+    award_planned_commencement: optDate(body, existing, "award_planned_commencement"),
+    award_remarks: optText(body, existing, "award_remarks"),
+    work_order_issued: Number(
+      body.work_order_issued === undefined ? existing.work_order_issued ?? 0 : body.work_order_issued ? 1 : 0
+    ),
+    work_order_number: optText(body, existing, "work_order_number"),
+    work_order_date: optDate(body, existing, "work_order_date"),
+    contract_reference: optText(body, existing, "contract_reference"),
+    executing_agency: optText(body, existing, "executing_agency"),
+    wo_planned_commencement: optDate(body, existing, "wo_planned_commencement"),
+    wo_actual_commencement: optDate(body, existing, "wo_actual_commencement"),
+    work_order_remarks: optText(body, existing, "work_order_remarks"),
+    planned_commencement_date: optDate(body, existing, "planned_commencement_date"),
+    actual_commencement_date: optDate(body, existing, "actual_commencement_date"),
+    commencement_status: optText(body, existing, "commencement_status") || "not_started",
+    commencement_delay_reason: optText(body, existing, "commencement_delay_reason"),
+    commencement_remarks: optText(body, existing, "commencement_remarks"),
+    testing_status: optText(body, existing, "testing_status") || "not_started",
+    testing_planned: optDate(body, existing, "testing_planned"),
+    testing_actual: optDate(body, existing, "testing_actual"),
+    testing_remarks: optText(body, existing, "testing_remarks"),
+    testing_issues: optText(body, existing, "testing_issues"),
+    commissioning_status: optText(body, existing, "commissioning_status") || "not_started",
+    commissioning_planned: optDate(body, existing, "commissioning_planned"),
+    commissioning_actual: optDate(body, existing, "commissioning_actual"),
+    commissioning_remarks: optText(body, existing, "commissioning_remarks"),
+    commissioning_outstanding: optText(body, existing, "commissioning_outstanding"),
+    handover_status: optText(body, existing, "handover_status") || "not_started",
+    handover_planned: optDate(body, existing, "handover_planned"),
+    handover_actual: optDate(body, existing, "handover_actual"),
+    receiving_agency: optText(body, existing, "receiving_agency"),
+    handover_remarks: optText(body, existing, "handover_remarks"),
+    handover_defects: optText(body, existing, "handover_defects"),
+    completion_certificate_status: optText(body, existing, "completion_certificate_status"),
+    supervision_type: optText(body, existing, "supervision_type"),
+    supervising_org: optText(body, existing, "supervising_org"),
+    supervising_person: optText(body, existing, "supervising_person"),
+    supervision_start: optDate(body, existing, "supervision_start"),
+    supervision_end: optDate(body, existing, "supervision_end"),
+    supervision_remarks: optText(body, existing, "supervision_remarks"),
   };
+}
+
+function lifecycleDateError(fields) {
+  const keys = [
+    "tender_document_date",
+    "tender_publication_date",
+    "bid_deadline",
+    "evaluation_date",
+    "tender_award_date",
+    "award_date",
+    "award_planned_commencement",
+    "work_order_date",
+    "wo_planned_commencement",
+    "wo_actual_commencement",
+    "planned_commencement_date",
+    "actual_commencement_date",
+    "testing_planned",
+    "testing_actual",
+    "commissioning_planned",
+    "commissioning_actual",
+    "handover_planned",
+    "handover_actual",
+    "supervision_start",
+    "supervision_end",
+  ];
+  for (const k of keys) {
+    if (fields[k] && !isISODate(fields[k])) return "Dates must use YYYY-MM-DD.";
+  }
+  const tErr = validateTenderStatus(fields.tender_status);
+  if (tErr) return tErr;
+  if (fields.tender_contract_value < 0 || fields.award_contract_value < 0) {
+    return "Contract values cannot be negative.";
+  }
+  return null;
+}
+
+const PROJECT_UPDATE_SQL = `UPDATE projects SET name=?, description=?, start_date=?, end_date=?, status=?, code=?, ministry=?, sector=?, state=?,
+     original_cost=?, revised_cost=?, expenditure=?, funds_released=?, original_end_date=?, revised_end_date=?, delay_reason=?, delay_notes=?,
+     reported_physical_progress=?,
+     tender_status=?, tender_document_date=?, tender_publication_date=?, bid_deadline=?, evaluation_date=?, tender_award_date=?,
+     contracting_agency=?, tender_contract_value=?, tender_remarks=?, tender_delay_reason=?,
+     award_date=?, awarded_agency=?, award_contract_value=?, award_planned_commencement=?, award_remarks=?,
+     work_order_issued=?, work_order_number=?, work_order_date=?, contract_reference=?, executing_agency=?,
+     wo_planned_commencement=?, wo_actual_commencement=?, work_order_remarks=?,
+     planned_commencement_date=?, actual_commencement_date=?, commencement_status=?, commencement_delay_reason=?, commencement_remarks=?,
+     testing_status=?, testing_planned=?, testing_actual=?, testing_remarks=?, testing_issues=?,
+     commissioning_status=?, commissioning_planned=?, commissioning_actual=?, commissioning_remarks=?, commissioning_outstanding=?,
+     handover_status=?, handover_planned=?, handover_actual=?, receiving_agency=?, handover_remarks=?, handover_defects=?,
+     completion_certificate_status=?,
+     supervision_type=?, supervising_org=?, supervising_person=?, supervision_start=?, supervision_end=?, supervision_remarks=?
+     WHERE id=?`;
+
+function projectUpdateArgs(fields, id) {
+  return [
+    fields.name,
+    fields.description,
+    fields.start_date,
+    fields.end_date,
+    fields.status,
+    fields.code,
+    fields.ministry,
+    fields.sector,
+    fields.state,
+    fields.original_cost,
+    fields.revised_cost,
+    fields.expenditure,
+    fields.funds_released,
+    fields.original_end_date,
+    fields.revised_end_date,
+    fields.delay_reason,
+    fields.delay_notes,
+    fields.reported_physical_progress,
+    fields.tender_status,
+    fields.tender_document_date || null,
+    fields.tender_publication_date || null,
+    fields.bid_deadline || null,
+    fields.evaluation_date || null,
+    fields.tender_award_date || null,
+    fields.contracting_agency,
+    fields.tender_contract_value,
+    fields.tender_remarks,
+    fields.tender_delay_reason,
+    fields.award_date || null,
+    fields.awarded_agency,
+    fields.award_contract_value,
+    fields.award_planned_commencement || null,
+    fields.award_remarks,
+    fields.work_order_issued,
+    fields.work_order_number,
+    fields.work_order_date || null,
+    fields.contract_reference,
+    fields.executing_agency,
+    fields.wo_planned_commencement || null,
+    fields.wo_actual_commencement || null,
+    fields.work_order_remarks,
+    fields.planned_commencement_date || null,
+    fields.actual_commencement_date || null,
+    fields.commencement_status,
+    fields.commencement_delay_reason,
+    fields.commencement_remarks,
+    fields.testing_status,
+    fields.testing_planned || null,
+    fields.testing_actual || null,
+    fields.testing_remarks,
+    fields.testing_issues,
+    fields.commissioning_status,
+    fields.commissioning_planned || null,
+    fields.commissioning_actual || null,
+    fields.commissioning_remarks,
+    fields.commissioning_outstanding,
+    fields.handover_status,
+    fields.handover_planned || null,
+    fields.handover_actual || null,
+    fields.receiving_agency,
+    fields.handover_remarks,
+    fields.handover_defects,
+    fields.completion_certificate_status,
+    fields.supervision_type,
+    fields.supervising_org,
+    fields.supervising_person,
+    fields.supervision_start || null,
+    fields.supervision_end || null,
+    fields.supervision_remarks,
+    id,
+  ];
 }
 
 app.post("/api/auth/login", (req, res) => {
@@ -325,6 +542,23 @@ app.get("/api/dashboard", authRequired, (req, res) => {
         .all(...ids)
     : [];
 
+  const newlyRisk = [];
+  const improving = [];
+  const deteriorating = [];
+  for (const p of projects) {
+    const prev = p.previous_health_band || "";
+    const cur = p.insights.health.band;
+    const prevRank = HEALTH_RANK[prev];
+    const curRank = HEALTH_RANK[cur] ?? 0;
+    if ((prev === "on_track" || prev === "watch") && (cur === "at_risk" || cur === "critical")) newlyRisk.push(p.name);
+    if (prevRank != null && curRank < prevRank) improving.push(p.name);
+    if (prevRank != null && curRank > prevRank) deteriorating.push(p.name);
+  }
+  const lifeSnap = snapshotCounts(projects);
+  const financialAnomalies = projects
+    .filter((p) => Math.abs(p.insights?.finance?.physical_financial_mismatch || 0) >= 15)
+    .map((p) => ({ id: p.id, name: p.name, mismatch: p.insights.finance.physical_financial_mismatch }));
+
   res.json({
     stats: {
       ...buckets,
@@ -342,6 +576,11 @@ app.get("/api/dashboard", authRequired, (req, res) => {
     early_warnings: warnings.slice(0, 8),
     forecast_risk: forecastCounts,
     smart_alerts: smartAlerts,
+    newly_risk: newlyRisk,
+    improving,
+    deteriorating,
+    lifecycle_snapshot: lifeSnap,
+    financial_anomalies: financialAnomalies,
     nlp_bottlenecks: nlpCounts(projects).slice(0, 8),
     risk_alerts: warnings.slice(0, 6).map((w) => ({
       project_id: w.project_id,
@@ -380,6 +619,8 @@ app.get("/api/dashboard", authRequired, (req, res) => {
       forecast: p.insights.forecast,
       outlook: p.insights.outlook,
       funds_released: p.funds_released,
+      current_stage: p.current_stage,
+      current_stage_label: p.current_stage_label,
     })),
   });
 });
@@ -411,6 +652,8 @@ app.get("/api/projects", authRequired, (req, res) => {
       data_source: p.data_source || "manual",
       calculated_progress: p.progress,
       reported_physical_progress: p.reported_physical_progress,
+      current_stage: p.current_stage,
+      current_stage_label: p.current_stage_label,
     }))
   );
 });
@@ -434,6 +677,8 @@ app.post("/api/projects", authRequired, requireRole("admin", "project_manager"),
   }
   const financeError = validateProjectNumbers(fields);
   if (financeError) return res.status(400).json({ error: financeError });
+  const lifeErr = lifecycleDateError(fields);
+  if (lifeErr) return res.status(400).json({ error: lifeErr });
   let managerId = req.user.id;
   if (req.user.role === "admin" && req.body?.manager_id) {
     managerId = Number(req.body.manager_id);
@@ -503,32 +748,9 @@ app.put("/api/projects/:id", authRequired, requireRole("admin", "project_manager
   }
   const financeError = validateProjectNumbers(fields, row);
   if (financeError) return res.status(400).json({ error: financeError });
-  db.prepare(
-    `UPDATE projects SET name=?, description=?, start_date=?, end_date=?, status=?, code=?, ministry=?, sector=?, state=?,
-     original_cost=?, revised_cost=?, expenditure=?, funds_released=?, original_end_date=?, revised_end_date=?, delay_reason=?, delay_notes=?,
-     reported_physical_progress=?
-     WHERE id=?`
-  ).run(
-    fields.name,
-    fields.description,
-    fields.start_date,
-    fields.end_date,
-    fields.status,
-    fields.code,
-    fields.ministry,
-    fields.sector,
-    fields.state,
-    fields.original_cost,
-    fields.revised_cost,
-    fields.expenditure,
-    fields.funds_released,
-    fields.original_end_date,
-    fields.revised_end_date,
-    fields.delay_reason,
-    fields.delay_notes,
-    fields.reported_physical_progress,
-    id
-  );
+  const lifeErr = lifecycleDateError(fields);
+  if (lifeErr) return res.status(400).json({ error: lifeErr });
+  db.prepare(PROJECT_UPDATE_SQL).run(...projectUpdateArgs(fields, id));
   logAudit(req.user, {
     action: "updated project",
     entity: "project",
@@ -551,6 +773,8 @@ app.delete("/api/projects/:id", authRequired, requireRole("admin", "project_mana
   if (!canManageProject(req.user, id)) {
     return res.status(403).json({ error: "Only the manager or an admin can delete this project." });
   }
+  db.prepare("DELETE FROM resource_readiness WHERE project_id = ?").run(id);
+  db.prepare("DELETE FROM lifecycle_stages WHERE project_id = ?").run(id);
   db.prepare("DELETE FROM alerts WHERE project_id = ?").run(id);
   db.prepare("DELETE FROM preconstructions WHERE project_id = ?").run(id);
   db.prepare("DELETE FROM quick_updates WHERE project_id = ?").run(id);
@@ -668,8 +892,8 @@ app.post("/api/projects/:id/tasks", authRequired, requireRole("admin", "project_
   if (!title || !due_date) return res.status(400).json({ error: "Title and due date are required." });
   if (!isISODate(due_date)) return res.status(400).json({ error: "Dates must use YYYY-MM-DD." });
   db.prepare(
-    `INSERT INTO tasks (project_id, milestone_id, title, description, assignee_id, due_date, status, priority, progress)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO tasks (project_id, milestone_id, title, description, assignee_id, due_date, status, priority, progress, wbs_group)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     req.body?.milestone_id || null,
@@ -679,7 +903,8 @@ app.post("/api/projects/:id/tasks", authRequired, requireRole("admin", "project_
     due_date,
     req.body?.status || "todo",
     req.body?.priority || "medium",
-    Number(req.body?.progress ?? 0)
+    Number(req.body?.progress ?? 0),
+    String(req.body?.wbs_group || "other")
   );
   logAudit(req.user, {
     action: "created task",
@@ -708,12 +933,13 @@ app.put("/api/tasks/:id", authRequired, requireRole("admin", "project_manager"),
   next.priority = String(req.body?.priority ?? task.priority);
   next.status = String(req.body?.status ?? task.status);
   next.progress = Number(req.body?.progress ?? task.progress);
+  next.wbs_group = String(req.body?.wbs_group ?? task.wbs_group ?? "other");
   if (next.status === "done") next.progress = 100;
   if (next.status === "todo" && next.progress === 100) next.progress = 0;
 
   db.prepare(
     `UPDATE tasks SET title = ?, description = ?, milestone_id = ?, assignee_id = ?, due_date = ?,
-     status = ?, priority = ?, progress = ? WHERE id = ?`
+     status = ?, priority = ?, progress = ?, wbs_group = ? WHERE id = ?`
   ).run(
     next.title,
     next.description,
@@ -723,6 +949,7 @@ app.put("/api/tasks/:id", authRequired, requireRole("admin", "project_manager"),
     next.status,
     next.priority,
     next.progress,
+    next.wbs_group,
     id
   );
   logAudit(req.user, {
@@ -805,6 +1032,13 @@ app.get("/api/meta", authRequired, (_req, res) => {
     states: STATES,
     precon_categories: PRECON_CATEGORIES,
     precon_statuses: PRECON_STATUSES,
+    lifecycle_stages: LIFECYCLE_STAGES,
+    lifecycle_statuses: LIFECYCLE_STATUSES,
+    tender_statuses: TENDER_STATUSES,
+    resource_categories: RESOURCE_CATEGORIES,
+    resource_statuses: RESOURCE_STATUSES,
+    wbs_groups: WBS_GROUPS,
+    supervision_types: SUPERVISION_TYPES,
     nlp_version: NLP_VERSION,
   });
 });
@@ -1249,6 +1483,78 @@ app.put("/api/preconstructions/:id", authRequired, requireRole("admin", "project
   res.json({ ...project, insights: intel(project) });
 });
 
+app.put("/api/projects/:id/lifecycle/:stage", authRequired, requireRole("admin", "project_manager"), (req, res) => {
+  const id = parseId(req.params.id);
+  const row = projectOr404(id, res);
+  if (!row) return;
+  if (!canManageProject(req.user, id)) return res.status(403).json({ error: "Cannot update lifecycle for this project." });
+  const stage = String(req.params.stage || "");
+  if (!isStageKey(stage)) return res.status(400).json({ error: "Unknown lifecycle stage." });
+  const err = validateLifecyclePatch(req.body || {});
+  if (err) return res.status(400).json({ error: err });
+  const existing = db.prepare("SELECT * FROM lifecycle_stages WHERE project_id = ? AND stage_key = ?").get(id, stage);
+  if (!existing) return res.status(404).json({ error: "Lifecycle stage not found." });
+  db.prepare(
+    `UPDATE lifecycle_stages SET status=?, planned_date=?, actual_date=?, delay_reason=?, responsible=?, remarks=?
+     WHERE project_id=? AND stage_key=?`
+  ).run(
+    String(req.body?.status ?? existing.status),
+    req.body?.planned_date === undefined ? existing.planned_date : req.body.planned_date || null,
+    req.body?.actual_date === undefined ? existing.actual_date : req.body.actual_date || null,
+    String(req.body?.delay_reason ?? existing.delay_reason ?? ""),
+    String(req.body?.responsible ?? existing.responsible ?? ""),
+    String(req.body?.remarks ?? existing.remarks ?? ""),
+    id,
+    stage
+  );
+  logAudit(req.user, {
+    action: "updated lifecycle stage",
+    entity: "lifecycle_stage",
+    projectId: id,
+    detail: `${stage} ${existing.status} → ${req.body?.status ?? existing.status}`,
+    previous: existing.status,
+    next: req.body?.status ?? existing.status,
+  });
+  const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id));
+  res.json({ ...project, insights: intel(project) });
+});
+
+app.put("/api/projects/:id/resources/:category", authRequired, requireRole("admin", "project_manager"), (req, res) => {
+  const id = parseId(req.params.id);
+  const row = projectOr404(id, res);
+  if (!row) return;
+  if (!canManageProject(req.user, id)) return res.status(403).json({ error: "Cannot update resources for this project." });
+  const category = String(req.params.category || "");
+  if (!isResourceCategory(category)) return res.status(400).json({ error: "Unknown resource category." });
+  const err = validateResourcePatch(req.body || {});
+  if (err) return res.status(400).json({ error: err });
+  const existing = db.prepare("SELECT * FROM resource_readiness WHERE project_id = ? AND category = ?").get(id, category);
+  if (!existing) return res.status(404).json({ error: "Resource category not found." });
+  db.prepare(
+    `UPDATE resource_readiness SET status=?, responsible=?, expected_date=?, actual_date=?, delay_reason=?, remarks=?
+     WHERE project_id=? AND category=?`
+  ).run(
+    String(req.body?.status ?? existing.status),
+    String(req.body?.responsible ?? existing.responsible ?? ""),
+    req.body?.expected_date === undefined ? existing.expected_date : req.body.expected_date || null,
+    req.body?.actual_date === undefined ? existing.actual_date : req.body.actual_date || null,
+    String(req.body?.delay_reason ?? existing.delay_reason ?? ""),
+    String(req.body?.remarks ?? existing.remarks ?? ""),
+    id,
+    category
+  );
+  logAudit(req.user, {
+    action: "updated resource readiness",
+    entity: "resource_readiness",
+    projectId: id,
+    detail: `${category} ${existing.status} → ${req.body?.status ?? existing.status}`,
+    previous: existing.status,
+    next: req.body?.status ?? existing.status,
+  });
+  const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id));
+  res.json({ ...project, insights: intel(project) });
+});
+
 app.post("/api/projects/:id/quick-update", authRequired, requireRole("admin", "project_manager"), (req, res) => {
   const id = parseId(req.params.id);
   const row = projectOr404(id, res);
@@ -1421,6 +1727,15 @@ function briefingBundle(req) {
     nlp_bottlenecks: nlpCounts(projects),
     open_interventions: interventions,
     precon_blockers,
+    resource_blockers: projects.flatMap((p) =>
+      (p.resources || [])
+        .filter((r) => r.status === "delayed" || r.status === "blocked")
+        .map((r) => `${p.name}: ${r.category} (${r.status})`)
+    ),
+    delayed_tender: projects.filter((p) => p.tender_status === "delayed" || (p.lifecycle_stages || []).some((s) => s.stage_key === "tender" && (s.status === "delayed" || s.status === "blocked"))).map((p) => p.name),
+    delayed_award: projects.filter((p) => (p.lifecycle_stages || []).some((s) => s.stage_key === "award" && (s.status === "delayed" || s.status === "blocked"))).map((p) => p.name),
+    delayed_commencement: projects.filter((p) => (p.commencement_delay_days || 0) > 0).map((p) => `${p.name} (${p.commencement_delay_days} days)`),
+    lifecycle_snapshot: snapshotCounts(projects),
     high_forecast: projects.filter((p) => p.insights.forecast?.schedule_risk === "high").map((p) => p.name),
     projects,
   };

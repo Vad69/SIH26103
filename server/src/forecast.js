@@ -17,7 +17,7 @@ function riskBand(slippageDays, costRisk) {
   return "low";
 }
 
-export function forecastProject({ project, insights, preconstructions = [] }, now = new Date()) {
+export function forecastProject({ project, insights, preconstructions = [], lifecycle_stages = [], resources = [] }, now = new Date()) {
   const today = todayISO(now);
   if (project.status === "completed") {
     return {
@@ -50,6 +50,11 @@ export function forecastProject({ project, insights, preconstructions = [] }, no
   extra += delayedClearances.length * 18;
   extra += Number(insights.overdue_critical_count || 0) * 12;
   extra += Math.max(0, Number(finance.time_overrun_days || 0)) * 0.15;
+  const delayedStages = lifecycle_stages.filter((s) => s.status === "delayed" || s.status === "blocked");
+  const blockedRes = resources.filter((r) => r.status === "delayed" || r.status === "blocked");
+  extra += delayedStages.length * 10;
+  extra += blockedRes.length * 14;
+  extra += Math.max(0, Number(insights.commencement_delay_days || 0)) * 0.4;
 
   const baselineEnd = finance.revised_end || finance.original_end || project.end_date;
   const estimated = addDays(today, extra);
@@ -82,6 +87,15 @@ export function forecastProject({ project, insights, preconstructions = [] }, no
   }
   for (const c of delayedClearances.slice(0, 3)) {
     drivers.push(`${c.name || delayLabel(c.category)} is ${c.status}.`);
+  }
+  for (const s of delayedStages.slice(0, 3)) {
+    drivers.push(`Lifecycle stage ${s.stage_key.replaceAll("_", " ")} is ${s.status}.`);
+  }
+  for (const r of blockedRes.slice(0, 3)) {
+    drivers.push(`${r.category.replaceAll("_", " ")} readiness is ${r.status}${r.delay_reason ? ` (${r.delay_reason})` : ""}.`);
+  }
+  if (insights.commencement_delay_days > 0) {
+    drivers.push(`Commencement was delayed by ${insights.commencement_delay_days} days.`);
   }
   if (finance.funds_released > 0 && finance.expenditure + 8 < finance.funds_released) {
     drivers.push("Funds have been released faster than expenditure (possible absorption lag).");
@@ -118,6 +132,9 @@ export function forecastProject({ project, insights, preconstructions = [] }, no
       reported_physical_progress: insights.reported_physical_progress,
       overdue_critical: insights.overdue_critical_count,
       delayed_clearances: delayedClearances.length,
+      delayed_lifecycle_stages: delayedStages.length,
+      blocked_resources: blockedRes.length,
+      commencement_delay_days: insights.commencement_delay_days,
       cost_overrun_pct: finance.cost_overrun_pct,
       funds_released: finance.funds_released,
       expenditure: finance.expenditure,

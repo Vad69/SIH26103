@@ -2,6 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import {
+  commencementDelayDays,
+  currentStage,
+  ensureLifecycle,
+  lifecycleLabel,
+  listLifecycle,
+  listResources,
+} from "./lifecycle.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.join(__dirname, "..", "data");
@@ -119,6 +127,64 @@ addColumn("projects", "health_score", "INTEGER");
 addColumn("projects", "previous_health_band", "TEXT DEFAULT ''");
 addColumn("projects", "funds_released", "REAL DEFAULT 0");
 
+const PROJECT_LIFECYCLE_COLS = [
+  ["tender_status", "TEXT DEFAULT 'not_started'"],
+  ["tender_document_date", "TEXT"],
+  ["tender_publication_date", "TEXT"],
+  ["bid_deadline", "TEXT"],
+  ["evaluation_date", "TEXT"],
+  ["tender_award_date", "TEXT"],
+  ["contracting_agency", "TEXT DEFAULT ''"],
+  ["tender_contract_value", "REAL DEFAULT 0"],
+  ["tender_remarks", "TEXT DEFAULT ''"],
+  ["tender_delay_reason", "TEXT DEFAULT ''"],
+  ["award_date", "TEXT"],
+  ["awarded_agency", "TEXT DEFAULT ''"],
+  ["award_contract_value", "REAL DEFAULT 0"],
+  ["award_planned_commencement", "TEXT"],
+  ["award_remarks", "TEXT DEFAULT ''"],
+  ["work_order_issued", "INTEGER DEFAULT 0"],
+  ["work_order_number", "TEXT DEFAULT ''"],
+  ["work_order_date", "TEXT"],
+  ["contract_reference", "TEXT DEFAULT ''"],
+  ["executing_agency", "TEXT DEFAULT ''"],
+  ["wo_planned_commencement", "TEXT"],
+  ["wo_actual_commencement", "TEXT"],
+  ["work_order_remarks", "TEXT DEFAULT ''"],
+  ["planned_commencement_date", "TEXT"],
+  ["actual_commencement_date", "TEXT"],
+  ["commencement_status", "TEXT DEFAULT 'not_started'"],
+  ["commencement_delay_reason", "TEXT DEFAULT ''"],
+  ["commencement_remarks", "TEXT DEFAULT ''"],
+  ["testing_status", "TEXT DEFAULT 'not_started'"],
+  ["testing_planned", "TEXT"],
+  ["testing_actual", "TEXT"],
+  ["testing_remarks", "TEXT DEFAULT ''"],
+  ["testing_issues", "TEXT DEFAULT ''"],
+  ["commissioning_status", "TEXT DEFAULT 'not_started'"],
+  ["commissioning_planned", "TEXT"],
+  ["commissioning_actual", "TEXT"],
+  ["commissioning_remarks", "TEXT DEFAULT ''"],
+  ["commissioning_outstanding", "TEXT DEFAULT ''"],
+  ["handover_status", "TEXT DEFAULT 'not_started'"],
+  ["handover_planned", "TEXT"],
+  ["handover_actual", "TEXT"],
+  ["receiving_agency", "TEXT DEFAULT ''"],
+  ["handover_remarks", "TEXT DEFAULT ''"],
+  ["handover_defects", "TEXT DEFAULT ''"],
+  ["completion_certificate_status", "TEXT DEFAULT ''"],
+  ["supervision_type", "TEXT DEFAULT ''"],
+  ["supervising_org", "TEXT DEFAULT ''"],
+  ["supervising_person", "TEXT DEFAULT ''"],
+  ["supervision_start", "TEXT"],
+  ["supervision_end", "TEXT"],
+  ["supervision_remarks", "TEXT DEFAULT ''"],
+];
+for (const [name, def] of PROJECT_LIFECYCLE_COLS) {
+  addColumn("projects", name, def);
+}
+addColumn("tasks", "wbs_group", "TEXT DEFAULT 'other'");
+
 db.exec(`
 UPDATE projects SET original_end_date = end_date WHERE original_end_date IS NULL OR original_end_date = '';
 UPDATE projects SET revised_end_date = end_date WHERE revised_end_date IS NULL OR revised_end_date = '';
@@ -206,6 +272,33 @@ CREATE TABLE IF NOT EXISTS quick_updates (
   created_at TEXT NOT NULL,
   user_id INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS lifecycle_stages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  stage_key TEXT NOT NULL,
+  sort_order INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'not_started',
+  planned_date TEXT,
+  actual_date TEXT,
+  delay_reason TEXT DEFAULT '',
+  responsible TEXT DEFAULT '',
+  remarks TEXT DEFAULT '',
+  UNIQUE(project_id, stage_key)
+);
+
+CREATE TABLE IF NOT EXISTS resource_readiness (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  category TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'not_applicable',
+  responsible TEXT DEFAULT '',
+  expected_date TEXT,
+  actual_date TEXT,
+  delay_reason TEXT DEFAULT '',
+  remarks TEXT DEFAULT '',
+  UNIQUE(project_id, category)
+);
 `);
 
 export function todayISO() {
@@ -261,9 +354,14 @@ export function enrichProject(project) {
   const preconstructions = db
     .prepare("SELECT * FROM preconstructions WHERE project_id = ? ORDER BY planned_completion")
     .all(project.id);
+  ensureLifecycle(db, project.id);
+  const lifecycle_stages = listLifecycle(db, project.id);
+  const resources = listResources(db, project.id);
   const progress = taskProgress(tasks);
   const delayedTasks = tasks.filter((t) => isOverdue(t.due_date, t.status === "done"));
   const computedStatus = projectStatusFromDates(project, progress);
+  const commenceDelay = commencementDelayDays(project.planned_commencement_date, project.actual_commencement_date);
+  const current = currentStage(lifecycle_stages);
 
   return {
     ...project,
@@ -274,6 +372,11 @@ export function enrichProject(project) {
     issues,
     interventions,
     preconstructions,
+    lifecycle_stages,
+    resources,
+    current_stage: current?.stage_key || "",
+    current_stage_label: current ? lifecycleLabel(current.stage_key) : "",
+    commencement_delay_days: commenceDelay,
     progress,
     delayed_task_count: delayedTasks.length,
     computed_status: computedStatus,

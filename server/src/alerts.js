@@ -1,4 +1,11 @@
-export function deriveSmartAlerts({ project, insights, forecast, preconstructions = [] }) {
+export function deriveSmartAlerts({
+  project,
+  insights,
+  forecast,
+  preconstructions = [],
+  lifecycle_stages = [],
+  resources = [],
+}) {
   const out = [];
   const health = insights.health || {};
   const finance = insights.finance || {};
@@ -57,6 +64,49 @@ export function deriveSmartAlerts({ project, insights, forecast, preconstruction
       severity: "warning",
       title: `Projected financial risk — ${project.name}`,
       explanation: `Cost-overrun risk is high (revised vs approved ${finance.cost_overrun_pct}%).`,
+    });
+  }
+  if (finance.physical_financial_mismatch >= 15) {
+    out.push({
+      code: "physical_financial_mismatch",
+      severity: "warning",
+      title: `Physical-Financial Mismatch — ${project.name}`,
+      explanation: `Financial progress ${finance.financial_progress}% vs system-calculated physical progress ${insights.progress}%.`,
+    });
+  }
+  const delayedStages = lifecycle_stages.filter((s) => s.status === "delayed" || s.status === "blocked");
+  for (const s of delayedStages) {
+    const code = `${s.stage_key}_delay`;
+    out.push({
+      code,
+      severity: s.status === "blocked" ? "critical" : s.stage_key === "commencement" || s.stage_key === "tender" || s.stage_key === "award" ? "high" : "warning",
+      title: `${s.stage_key.replaceAll("_", " ")} ${s.status} — ${project.name}`,
+      explanation: s.delay_reason || s.remarks || `Lifecycle stage is ${s.status}.`,
+    });
+  }
+  const blockedRes = resources.filter((r) => r.status === "delayed" || r.status === "blocked");
+  if (blockedRes.length) {
+    out.push({
+      code: "resource_blocked",
+      severity: blockedRes.some((r) => r.status === "blocked") ? "critical" : "high",
+      title: `Resource blocker — ${project.name}`,
+      explanation: blockedRes.map((r) => `${r.category.replaceAll("_", " ")} (${r.status}${r.delay_reason ? `: ${r.delay_reason}` : ""})`).join("; "),
+    });
+  }
+  if (insights.commencement_delay_days > 0) {
+    out.push({
+      code: "commencement_delay",
+      severity: insights.commencement_delay_days >= 21 ? "high" : "warning",
+      title: `${insights.commencement_delay_days} days commencement delay — ${project.name}`,
+      explanation: project.commencement_delay_reason || "Actual commencement is after the planned date.",
+    });
+  }
+  if (project.tender_status === "delayed") {
+    out.push({
+      code: "tender_delay",
+      severity: "high",
+      title: `Tender delayed — ${project.name}`,
+      explanation: project.tender_delay_reason || project.tender_remarks || "Tender monitoring status is delayed.",
     });
   }
   if (health.score != null && health.score <= 40) {

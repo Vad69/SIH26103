@@ -69,7 +69,10 @@ function bandFor(score) {
   return "critical";
 }
 
-export function analyzeProject({ project, tasks = [], milestones = [], issues = [], preconstructions = [] }, now = new Date()) {
+export function analyzeProject(
+  { project, tasks = [], milestones = [], issues = [], preconstructions = [], lifecycle_stages = [], resources = [] },
+  now = new Date()
+) {
   const today = todayISO(now);
   const overdue = tasks.filter((t) => t.status !== "done" && t.due_date < today);
   const overdueCritical = overdue.filter((t) => t.priority === "critical");
@@ -88,10 +91,25 @@ export function analyzeProject({ project, tasks = [], milestones = [], issues = 
   const physicalGap = elapsed - progress;
   finance.physical_financial_mismatch = finance.financial_progress - progress;
   const delayedPrecon = preconstructions.filter((c) => c.status === "delayed" || c.status === "blocked");
+  const delayedStages = lifecycle_stages.filter((s) => s.status === "delayed" || s.status === "blocked");
+  const blockedRes = resources.filter((r) => r.status === "delayed" || r.status === "blocked");
+  const commenceDelay = (() => {
+    const planned = project.planned_commencement_date;
+    const actual = project.actual_commencement_date;
+    if (!planned || !actual) return null;
+    return daysBetween(planned, actual);
+  })();
   const openCriticalIssues = issues.filter((i) => i.status !== "resolved" && i.severity === "critical").length;
   const openIssues = issues.filter((i) => i.status !== "resolved").length;
 
-  const scheduleScore = clamp(100 - finance.time_overrun_days / 3 - Math.max(0, physicalGap) * 1.2);
+  const scheduleScore = clamp(
+    100 -
+      finance.time_overrun_days / 3 -
+      Math.max(0, physicalGap) * 1.2 -
+      delayedStages.length * 6 -
+      blockedRes.length * 8 -
+      Math.min(20, Math.max(0, commenceDelay || 0) / 3)
+  );
   const physicalScore = clamp(100 - Math.max(0, physicalGap) * 2.2);
   const financialScore = clamp(
     100 -
@@ -174,7 +192,29 @@ export function analyzeProject({ project, tasks = [], milestones = [], issues = 
   if (finance.physical_financial_mismatch >= 15) {
     reasons.push({
       severity: "medium",
-      text: `Financial progress (${finance.financial_progress}%) is ahead of system-calculated physical progress (${progress}%)`,
+      text: `Physical-Financial Mismatch: financial progress (${finance.financial_progress}%) is ahead of system-calculated physical progress (${progress}%)`,
+    });
+  }
+  if (delayedStages.length) {
+    reasons.push({
+      severity: delayedStages.some((s) => s.status === "blocked") ? "high" : "medium",
+      text: `${delayedStages.length} lifecycle stage${delayedStages.length === 1 ? " is" : "s are"} delayed or blocked (${delayedStages
+        .map((s) => s.stage_key.replaceAll("_", " "))
+        .join(", ")})`,
+    });
+  }
+  if (blockedRes.length) {
+    reasons.push({
+      severity: "high",
+      text: `${blockedRes.length} resource categor${blockedRes.length === 1 ? "y is" : "ies are"} delayed or blocked (${blockedRes
+        .map((r) => r.category.replaceAll("_", " "))
+        .join(", ")})`,
+    });
+  }
+  if (commenceDelay != null && commenceDelay > 0) {
+    reasons.push({
+      severity: commenceDelay >= 21 ? "high" : "medium",
+      text: `${commenceDelay} days commencement delay`,
     });
   }
 
@@ -234,7 +274,10 @@ export function analyzeProject({ project, tasks = [], milestones = [], issues = 
       overdueCritical.length >= 1 ||
       finance.cost_overrun_pct >= 10 ||
       openMilestones.length >= 2 ||
-      delayedPrecon.length >= 1);
+      delayedPrecon.length >= 1 ||
+      delayedStages.length >= 1 ||
+      blockedRes.length >= 1 ||
+      (commenceDelay != null && commenceDelay >= 14));
 
   let intervention = "Continue routine monitoring. This engine identifies and prioritizes work; it does not close it.";
   if (band === "critical") {
@@ -269,6 +312,15 @@ export function analyzeProject({ project, tasks = [], milestones = [], issues = 
     whatBits.push(
       `${delayedPrecon.length} pre-construction item${delayedPrecon.length === 1 ? " is" : "s are"} delayed or blocked`
     );
+  }
+  if (delayedStages.length) {
+    whatBits.push(`${delayedStages.length} lifecycle stage${delayedStages.length === 1 ? " is" : "s are"} delayed or blocked`);
+  }
+  if (blockedRes.length) {
+    whatBits.push(`${blockedRes.length} resource categor${blockedRes.length === 1 ? "y is" : "ies are"} not ready`);
+  }
+  if (commenceDelay != null && commenceDelay > 0) {
+    whatBits.push(`${commenceDelay} days commencement delay`);
   }
   const what = whatBits.join("; ") || reasons[0]?.text || "Slippage indicators have worsened relative to the original plan";
   const reviewBit = overdueCritical.length
@@ -305,6 +357,9 @@ export function analyzeProject({ project, tasks = [], milestones = [], issues = 
     open_issue_count: openIssues,
     alerts,
     headline: alerts[0],
+    commencement_delay_days: commenceDelay,
+    lifecycle_delayed_count: delayedStages.length,
+    resource_blocked_count: blockedRes.length,
     finance,
     health: {
       score,

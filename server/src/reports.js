@@ -38,6 +38,9 @@ export function flashReportPayload(projects, extras) {
       expenditure: p.expenditure,
       delay_reason: p.delay_reason ? delayLabel(p.delay_reason) : "",
       data_source: p.data_source,
+      lifecycle_stage: p.current_stage_label || p.insights?.outlook?.current_stage_label || "",
+      commencement_delay_days: p.commencement_delay_days,
+      mismatch: p.insights?.outlook?.mismatch || null,
     })),
   };
 }
@@ -75,6 +78,15 @@ export function qpisrPayload(projects, extras) {
         issues: (p.issues || []).filter((i) => i.status !== "resolved").map((i) => i.title),
         interventions: (p.interventions || []).filter((i) => i.status !== "resolved").map((i) => i.action),
         bottleneck: p.insights?.outlook?.bottleneck?.label || delayLabel(p.delay_reason),
+        lifecycle_stage: p.current_stage_label || p.insights?.outlook?.current_stage_label || "",
+        resource_blocked: (p.resources || [])
+          .filter((r) => r.status === "delayed" || r.status === "blocked")
+          .map((r) => r.category),
+        testing_status: p.testing_status,
+        commissioning_status: p.commissioning_status,
+        handover_status: p.handover_status,
+        commencement_delay_days: p.commencement_delay_days,
+        mismatch: p.insights?.outlook?.mismatch || null,
         data_source: p.data_source,
       };
     }),
@@ -105,7 +117,7 @@ export function reportLines(kind, payload) {
   ];
   for (const p of payload.projects || []) {
     lines.push(
-      `${p.name} | health ${p.health || ""} | forecast ${p.forecast_risk || ""} | calc ${p.physical_progress ?? p.calculated_progress}% | sanctioned ${p.sanctioned ?? p.original_cost} Cr | released ${p.funds_released} Cr | exp ${p.expenditure} Cr | source ${p.data_source}`
+      `${p.name} | stage ${p.lifecycle_stage || ""} | health ${p.health || ""} | forecast ${p.forecast_risk || ""} | calc ${p.physical_progress ?? p.calculated_progress}% | sanctioned ${p.sanctioned ?? p.original_cost} Cr | released ${p.funds_released} Cr | exp ${p.expenditure} Cr | source ${p.data_source}`
     );
   }
   lines.push("", "Open interventions:");
@@ -116,5 +128,12 @@ export function reportLines(kind, payload) {
   for (const b of payload.precon_blockers || []) {
     lines.push(`- ${b}`);
   }
+  lines.push("", "Resource blockers:");
+  for (const b of payload.resource_blockers || []) {
+    lines.push(`- ${b}`);
+  }
+  lines.push("", `Delayed tender: ${(payload.delayed_tender || []).join("; ") || "None"}`);
+  lines.push(`Delayed award: ${(payload.delayed_award || []).join("; ") || "None"}`);
+  lines.push(`Commencement delays: ${(payload.delayed_commencement || []).join("; ") || "None"}`);
   return lines;
 }
