@@ -900,7 +900,8 @@ export function interventionWriteFields(body, existing = {}) {
     completedAt = new Date().toISOString();
   }
   if (status === "open" || status === "in_progress") {
-    completedAt = body.completed_at !== undefined ? body.completed_at : status === (existing.status || "") ? existing.completed_at || null : null;
+    // Client PUTs spread the full row; do not keep a completion timestamp on open work.
+    completedAt = null;
   }
   return {
     action: String(body.action ?? existing.action ?? "").trim(),
