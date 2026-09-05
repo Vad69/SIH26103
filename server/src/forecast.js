@@ -4,6 +4,7 @@
  */
 import { daysBetween, todayISO } from "./insights.js";
 import { delayLabel } from "./constants.js";
+import { delayedStagesForPenalty } from "./lifecycle.js";
 
 function addDays(iso, days) {
   const d = new Date(`${iso}T00:00:00Z`);
@@ -50,7 +51,11 @@ export function forecastProject({ project, insights, preconstructions = [], life
   extra += delayedClearances.length * 18;
   extra += Number(insights.overdue_critical_count || 0) * 12;
   extra += Math.max(0, Number(finance.time_overrun_days || 0)) * 0.15;
-  const delayedStages = lifecycle_stages.filter((s) => s.status === "delayed" || s.status === "blocked");
+  const delayedStages = delayedStagesForPenalty(lifecycle_stages, {
+    skipCommencement: Number(insights.commencement_delay_days || 0) > 0,
+    skipPreconstruction: delayedClearances.length > 0,
+    skipResourceMobilisation: resources.some((r) => r.status === "delayed" || r.status === "blocked"),
+  });
   const blockedRes = resources.filter((r) => r.status === "delayed" || r.status === "blocked");
   extra += delayedStages.length * 10;
   extra += blockedRes.length * 14;

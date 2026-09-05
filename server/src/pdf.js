@@ -26,8 +26,8 @@ export function buildSimplePdf({ title, subtitle, lines }) {
   const pageW = 595;
   const pageH = 842;
   const all = [];
-  for (const raw of lines) {
-    all.push(...wrap(raw, 92));
+  for (const raw of lines || []) {
+    all.push(...wrap(raw == null ? "" : String(raw), 92));
   }
   const perPage = 48;
   const pages = [];

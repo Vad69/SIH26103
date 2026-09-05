@@ -31,6 +31,7 @@ import {
   validateLifecyclePatch,
   validateResourcePatch,
   validateTenderStatus,
+  isLifecycleStatus,
 } from "./lifecycle.js";
 import { logAudit, listAudit } from "./audit.js";
 import { parseCsv, toCsv } from "./csv.js";
@@ -277,6 +278,14 @@ function lifecycleDateError(fields) {
   }
   const tErr = validateTenderStatus(fields.tender_status);
   if (tErr) return tErr;
+  for (const key of ["commencement_status", "testing_status", "commissioning_status", "handover_status"]) {
+    if (fields[key] && !isLifecycleStatus(fields[key])) {
+      return "Stage status must be Not Started, In Progress, Completed, Delayed, Blocked, or Not Applicable.";
+    }
+  }
+  if (!Number.isFinite(fields.tender_contract_value) || !Number.isFinite(fields.award_contract_value)) {
+    return "Contract values must be numbers.";
+  }
   if (fields.tender_contract_value < 0 || fields.award_contract_value < 0) {
     return "Contract values cannot be negative.";
   }

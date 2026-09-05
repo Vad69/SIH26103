@@ -209,7 +209,6 @@ export default function ProjectDetail() {
         <Card>
           <p className="text-xs text-ink/50 uppercase">Manager</p>
           <p className="mt-1 text-sm">{project.manager?.name}</p>
-          <p className="mt-2 text-[11px] text-ink/50">Data source: {(project.data_source || "manual").replace("_", " ")}</p>
         </Card>
       </div>
 

@@ -6,10 +6,14 @@ import { deriveSmartAlerts } from "./alerts.js";
 import { commencementDelayDays, currentStage, validateLifecyclePatch } from "./lifecycle.js";
 import { classifyBottleneck } from "./nlp.js";
 import { flashReportPayload, qpisrPayload } from "./reports.js";
+import { buildSimplePdf } from "./pdf.js";
 
 test("commencement delay is the calendar gap when both dates exist", () => {
   assert.equal(commencementDelayDays("2026-01-10", "2026-02-02"), 23);
+  assert.equal(commencementDelayDays("2026-01-10", "2026-01-10"), 0);
   assert.equal(commencementDelayDays("2026-01-10", null), null);
+  assert.equal(commencementDelayDays(null, "2026-02-02"), null);
+  assert.equal(commencementDelayDays("10-01-2026", "2026-02-02"), null);
 });
 
 test("lifecycle validation rejects unknown status and bad dates", () => {
@@ -65,6 +69,36 @@ test("delayed lifecycle and blocked resources contribute to the existing health 
   assert.ok(result.health.reasons.some((r) => /23 days commencement delay/.test(r.text)));
   assert.equal(result.commencement_delay_days, 23);
   assert.equal(result.health.factor_rows.length, 5);
+});
+
+test("commencement date delay is not also applied as a delayed commencement stage penalty", () => {
+  const now = new Date("2026-03-01T12:00:00Z");
+  const base = {
+    project: {
+      start_date: "2026-01-01",
+      end_date: "2026-12-31",
+      original_end_date: "2026-12-31",
+      revised_end_date: "2026-12-31",
+      original_cost: 100,
+      revised_cost: 100,
+      expenditure: 20,
+      funds_released: 25,
+      status: "active",
+      planned_commencement_date: "2026-01-10",
+      actual_commencement_date: "2026-02-02",
+    },
+    tasks: [{ status: "in_progress", due_date: "2026-10-01", priority: "medium", progress: 40 }],
+    milestones: [],
+    issues: [],
+    preconstructions: [],
+    resources: [],
+  };
+  const datesOnly = analyzeProject({ ...base, lifecycle_stages: [] }, now);
+  const datesAndStage = analyzeProject(
+    { ...base, lifecycle_stages: [{ stage_key: "commencement", status: "delayed", sort_order: 5 }] },
+    now
+  );
+  assert.equal(datesOnly.health.factors.schedule, datesAndStage.health.factors.schedule);
 });
 
 test("forecast drivers include commencement and resource delays", () => {
@@ -133,6 +167,30 @@ test("smart alerts include tender, resource, mismatch and commencement codes", (
   assert.ok(codes.includes("handover_delay"));
 });
 
+test("tender and commencement alerts are not duplicated when both metadata and stages are delayed", () => {
+  const alerts = deriveSmartAlerts({
+    project: { name: "Demo", tender_status: "delayed", tender_delay_reason: "Retender" },
+    insights: {
+      health: { band: "watch", score: 70, reasons: [] },
+      progress: 40,
+      overdue_critical_count: 0,
+      alerts: [],
+      finance: { physical_financial_mismatch: 0, financial_progress: 40, cost_overrun_pct: 0 },
+      commencement_delay_days: 23,
+    },
+    forecast: { schedule_risk: "low", estimated_slippage_days: 0 },
+    preconstructions: [],
+    lifecycle_stages: [
+      { stage_key: "tender", status: "delayed" },
+      { stage_key: "commencement", status: "delayed" },
+    ],
+    resources: [],
+  });
+  const codes = alerts.map((a) => a.code);
+  assert.equal(codes.filter((c) => c === "tender_delay").length, 1);
+  assert.equal(codes.filter((c) => c === "commencement_delay").length, 1);
+});
+
 test("reports include lifecycle stage on project rows", () => {
   const projects = [
     {
@@ -161,4 +219,14 @@ test("reports include lifecycle stage on project rows", () => {
   const q = qpisrPayload(projects, { period: "Q2", generated_at: "2026-09-02" });
   assert.equal(q.projects[0].lifecycle_stage, "Execution");
   assert.deepEqual(q.projects[0].resource_blocked, ["materials"]);
+});
+
+test("PDF generation succeeds when optional lifecycle fields are empty", () => {
+  const buf = buildSimplePdf({
+    title: "Pragati Prototype",
+    subtitle: "empty optional fields",
+    lines: [null, "", "Stage  | health  | calc %", undefined],
+  });
+  assert.ok(buf.length > 40);
+  assert.equal(buf.subarray(0, 5).toString(), "%PDF-");
 });

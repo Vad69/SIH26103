@@ -78,7 +78,9 @@ export function isISODate(value) {
 
 export function commencementDelayDays(planned, actual) {
   if (!planned || !actual) return null;
+  if (!isISODate(planned) || !isISODate(actual)) return null;
   const ms = new Date(`${actual}T00:00:00Z`) - new Date(`${planned}T00:00:00Z`);
+  if (!Number.isFinite(ms)) return null;
   return Math.round(ms / 86400000);
 }
 
@@ -138,6 +140,23 @@ export function stageTone(stage, currentKey) {
 
 export function delayedLifecycleStages(stages = []) {
   return stages.filter((s) => s.status === "delayed" || s.status === "blocked");
+}
+
+export function delayedStagesForPenalty(
+  lifecycle_stages = [],
+  { skipCommencement = false, skipPreconstruction = false, skipResourceMobilisation = false } = {}
+) {
+  return lifecycle_stages.filter((s) => {
+    if (s.status !== "delayed" && s.status !== "blocked") return false;
+    if (skipCommencement && s.stage_key === "commencement") return false;
+    if (skipPreconstruction && s.stage_key === "pre_construction") return false;
+    if (skipResourceMobilisation && s.stage_key === "resource_mobilisation") return false;
+    return true;
+  });
+}
+
+export function isLifecycleStatus(status) {
+  return STAGE_STATUS_IDS.has(String(status || ""));
 }
 
 export function blockedResources(resources = []) {
