@@ -3,6 +3,7 @@ import { useAuth } from "../auth.jsx";
 
 const links = [
   { to: "/", label: "Command center", end: true },
+  { to: "/decisions", label: "Decision board" },
   { to: "/projects", label: "Projects" },
   { to: "/reports", label: "Reports" },
   { to: "/briefing", label: "Monthly brief" },

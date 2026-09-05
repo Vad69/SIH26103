@@ -299,7 +299,54 @@ CREATE TABLE IF NOT EXISTS resource_readiness (
   remarks TEXT DEFAULT '',
   UNIQUE(project_id, category)
 );
+
+CREATE TABLE IF NOT EXISTS project_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'auto',
+  state_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_project_reviews_project ON project_reviews(project_id, created_at, id);
 `);
+
+(function migrateInterventions() {
+  const master = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='interventions'").get();
+  const sql = master?.sql || "";
+  if (sql.includes("'cancelled'")) {
+    addColumn("interventions", "recommended_action", "TEXT DEFAULT ''");
+    addColumn("interventions", "actual_action", "TEXT DEFAULT ''");
+    addColumn("interventions", "trigger_summary", "TEXT DEFAULT ''");
+    addColumn("interventions", "outcome", "TEXT DEFAULT ''");
+    addColumn("interventions", "completed_at", "TEXT");
+    return;
+  }
+  raw.exec("PRAGMA foreign_keys = OFF");
+  db.exec(`
+    CREATE TABLE interventions_mig (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      issue_id INTEGER REFERENCES issues(id) ON DELETE SET NULL,
+      action TEXT NOT NULL,
+      recommended_action TEXT DEFAULT '',
+      actual_action TEXT DEFAULT '',
+      trigger_summary TEXT DEFAULT '',
+      outcome TEXT DEFAULT '',
+      authority TEXT DEFAULT '',
+      assigned_officer TEXT DEFAULT '',
+      due_date TEXT,
+      priority TEXT NOT NULL DEFAULT 'high' CHECK (priority IN ('medium', 'high', 'critical')),
+      status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'resolved', 'cancelled')),
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+    INSERT INTO interventions_mig (id, project_id, issue_id, action, authority, assigned_officer, due_date, priority, status, created_at)
+    SELECT id, project_id, issue_id, action, authority, assigned_officer, due_date, priority, status, created_at FROM interventions;
+    DROP TABLE interventions;
+    ALTER TABLE interventions_mig RENAME TO interventions;
+  `);
+  raw.exec("PRAGMA foreign_keys = ON");
+})();
 
 export function todayISO() {
   return new Date().toISOString().slice(0, 10);

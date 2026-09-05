@@ -18,7 +18,10 @@ function riskBand(slippageDays, costRisk) {
   return "low";
 }
 
-export function forecastProject({ project, insights, preconstructions = [], lifecycle_stages = [], resources = [] }, now = new Date()) {
+export function forecastProject(
+  { project, insights, preconstructions = [], lifecycle_stages = [], resources = [], extraSlippageDays = 0 },
+  now = new Date()
+) {
   const today = todayISO(now);
   if (project.status === "completed") {
     return {
@@ -60,6 +63,7 @@ export function forecastProject({ project, insights, preconstructions = [], life
   extra += delayedStages.length * 10;
   extra += blockedRes.length * 14;
   extra += Math.max(0, Number(insights.commencement_delay_days || 0)) * 0.4;
+  extra += Math.max(0, Number(extraSlippageDays) || 0);
 
   const baselineEnd = finance.revised_end || finance.original_end || project.end_date;
   const estimated = addDays(today, extra);

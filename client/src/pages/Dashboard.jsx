@@ -87,9 +87,14 @@ export default function Dashboard() {
             Prototype decision-support using PAIMANA-aligned monitoring concepts (cost, time, milestones, delay reasons, interventions). Seeded projects are <strong>demo data</strong>. Indicators are calculated in this app — they are not official PAIMANA statistics.
           </p>
         </div>
+        <div className="flex flex-col items-end gap-2">
+        <Link to="/decisions" className="rounded-md bg-navy px-3 py-2 text-sm text-white">
+          Open decision board
+        </Link>
         <button className="rounded-md border border-sand bg-white px-3 py-2 text-sm" type="button" onClick={exportCsv}>
           Export CSV
         </button>
+        </div>
       </div>
 
       <div className="grid gap-3 md:grid-cols-5">

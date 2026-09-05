@@ -11,6 +11,7 @@ import Briefing from "./pages/Briefing.jsx";
 import ImportPage from "./pages/Import.jsx";
 import ExecutiveReports from "./pages/ExecutiveReports.jsx";
 import Alerts from "./pages/Alerts.jsx";
+import DecisionBoard from "./pages/DecisionBoard.jsx";
 
 function Guard({ children }) {
   const { user, loading } = useAuth();
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="flash" element={<ExecutiveReports kind="flash" />} />
         <Route path="qpisr" element={<ExecutiveReports kind="qpisr" />} />
         <Route path="alerts" element={<Alerts />} />
+        <Route path="decisions" element={<DecisionBoard />} />
         <Route path="import" element={<ImportPage />} />
         <Route path="users" element={<Users />} />
       </Route>

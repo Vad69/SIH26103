@@ -240,4 +240,93 @@ test("write endpoints enforce Admin / PM / Member rules", async (t) => {
   const dash = await req("/api/dashboard", { token: admin });
   assert.ok(dash.data.lifecycle_snapshot?.by_stage);
   assert.ok(flash.data.projects[0].lifecycle_stage !== undefined);
+
+  const whatChanged = await req(`/api/projects/${ownId}/what-changed`, { token: pm });
+  assert.equal(whatChanged.status, 200);
+  assert.equal(typeof whatChanged.data.available, "boolean");
+
+  const memberChanged = await req(`/api/projects/${ownId}/what-changed`, { token: member });
+  assert.equal(memberChanged.status, 200);
+
+  const whatIf = await req(`/api/projects/${ownId}/what-if`, {
+    method: "POST",
+    token: member,
+    body: { resource_category: "materials", resolve_in_days: 7 },
+  });
+  assert.equal(whatIf.status, 200);
+  assert.equal(whatIf.data.kind, "scenario_simulation");
+  const liveAfterSim = await req(`/api/projects/${ownId}`, { token: pm });
+  assert.equal(liveAfterSim.data.resources.find((r) => r.category === "materials").status, "blocked");
+
+  const badIf = await req(`/api/projects/${ownId}/what-if`, {
+    method: "POST",
+    token: pm,
+    body: { resource_category: "materials", resolve_in_days: -4 },
+  });
+  assert.equal(badIf.status, 400);
+
+  const memberIv = await req(`/api/projects/${ownId}/interventions`, {
+    method: "POST",
+    token: member,
+    body: { action: "Should fail" },
+  });
+  assert.equal(memberIv.status, 403);
+
+  const iv = await req(`/api/projects/${ownId}/interventions`, {
+    method: "POST",
+    token: pm,
+    body: {
+      action: "Escalate supplier and review procurement milestone.",
+      recommended_action: "Escalate procurement issue",
+      assigned_officer: "Project Manager",
+      due_date: "2026-09-12",
+      priority: "high",
+      trigger_summary: "Materials blocked",
+    },
+  });
+  assert.equal(iv.status, 201);
+  const createdIv = (iv.data.interventions || []).find((row) => row.assigned_officer === "Project Manager");
+  assert.ok(createdIv);
+  assert.equal(createdIv.status, "open");
+
+  const blankIv = await req(`/api/projects/${ownId}/interventions`, {
+    method: "POST",
+    token: pm,
+    body: { action: "   " },
+  });
+  assert.equal(blankIv.status, 400);
+
+  const complete = await req(`/api/interventions/${createdIv.id}`, {
+    method: "PUT",
+    token: pm,
+    body: { ...createdIv, status: "resolved", outcome: "Supply restored" },
+  });
+  assert.equal(complete.status, 200);
+  const completed = complete.data.interventions.find((row) => row.id === createdIv.id);
+  assert.equal(completed.status, "resolved");
+  assert.equal(completed.outcome, "Supply restored");
+  assert.ok(completed.completed_at);
+
+  const cancelIv = await req(`/api/projects/${ownId}/interventions`, {
+    method: "POST",
+    token: pm,
+    body: { action: "Temporary hold", status: "open" },
+  });
+  const toCancel = cancelIv.data.interventions.find((row) => row.action === "Temporary hold");
+  const cancelled = await req(`/api/interventions/${toCancel.id}`, {
+    method: "PUT",
+    token: pm,
+    body: { status: "cancelled", outcome: "No longer required" },
+  });
+  assert.equal(cancelled.data.interventions.find((row) => row.id === toCancel.id).status, "cancelled");
+
+  const timeline = await req(`/api/projects/${ownId}/decision-timeline`, { token: pm });
+  assert.equal(timeline.status, 200);
+  assert.ok(Array.isArray(timeline.data.events));
+  assert.ok(timeline.data.events.some((e) => e.type === "intervention_created"));
+
+  const board = await req("/api/decision-board", { token: admin });
+  assert.equal(board.status, 200);
+  assert.ok(board.data.groups.immediate);
+  assert.ok(board.data.groups.at_risk);
 });
