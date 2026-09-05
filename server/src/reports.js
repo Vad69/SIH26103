@@ -76,7 +76,7 @@ export function qpisrPayload(projects, extras) {
         milestones_total: ms.length,
         precon_blocked: precon.filter((c) => c.status === "delayed" || c.status === "blocked").map((c) => c.name),
         issues: (p.issues || []).filter((i) => i.status !== "resolved").map((i) => i.title),
-        interventions: (p.interventions || []).filter((i) => i.status !== "resolved").map((i) => i.action),
+        interventions: (p.interventions || []).filter((i) => i.status !== "resolved" && i.status !== "cancelled").map((i) => i.action),
         bottleneck: p.insights?.outlook?.bottleneck?.label || delayLabel(p.delay_reason),
         lifecycle_stage: p.current_stage_label || p.insights?.outlook?.current_stage_label || "",
         resource_blocked: (p.resources || [])

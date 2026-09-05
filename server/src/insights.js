@@ -3,6 +3,7 @@
  * No ML. Scores schedule, physical progress, finance, milestones, critical tasks.
  */
 import { delayLabel } from "./constants.js";
+import { commencementDelayDays, delayedStagesForPenalty } from "./lifecycle.js";
 
 export function todayISO(now = new Date()) {
   return now.toISOString().slice(0, 10);
@@ -91,14 +92,13 @@ export function analyzeProject(
   const physicalGap = elapsed - progress;
   finance.physical_financial_mismatch = finance.financial_progress - progress;
   const delayedPrecon = preconstructions.filter((c) => c.status === "delayed" || c.status === "blocked");
-  const delayedStages = lifecycle_stages.filter((s) => s.status === "delayed" || s.status === "blocked");
   const blockedRes = resources.filter((r) => r.status === "delayed" || r.status === "blocked");
-  const commenceDelay = (() => {
-    const planned = project.planned_commencement_date;
-    const actual = project.actual_commencement_date;
-    if (!planned || !actual) return null;
-    return daysBetween(planned, actual);
-  })();
+  const commenceDelay = commencementDelayDays(project.planned_commencement_date, project.actual_commencement_date);
+  const delayedStages = lifecycle_stages.filter((s) => s.status === "delayed" || s.status === "blocked");
+  const scoredStages = delayedStagesForPenalty(lifecycle_stages, {
+    skipCommencement: commenceDelay != null && commenceDelay > 0,
+    skipResourceMobilisation: blockedRes.length > 0,
+  });
   const openCriticalIssues = issues.filter((i) => i.status !== "resolved" && i.severity === "critical").length;
   const openIssues = issues.filter((i) => i.status !== "resolved").length;
 
@@ -106,7 +106,7 @@ export function analyzeProject(
     100 -
       finance.time_overrun_days / 3 -
       Math.max(0, physicalGap) * 1.2 -
-      delayedStages.length * 6 -
+      scoredStages.length * 6 -
       blockedRes.length * 8 -
       Math.min(20, Math.max(0, commenceDelay || 0) / 3)
   );

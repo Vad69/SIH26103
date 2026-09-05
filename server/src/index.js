@@ -31,6 +31,7 @@ import {
   validateLifecyclePatch,
   validateResourcePatch,
   validateTenderStatus,
+  isLifecycleStatus,
 } from "./lifecycle.js";
 import { logAudit, listAudit } from "./audit.js";
 import { parseCsv, toCsv } from "./csv.js";
@@ -41,6 +42,18 @@ import { classifyBottleneck, NLP_VERSION } from "./nlp.js";
 import { deriveSmartAlerts, syncProjectAlerts } from "./alerts.js";
 import { nlpCounts, flashReportPayload, qpisrPayload, reportLines } from "./reports.js";
 import { buildSimplePdf } from "./pdf.js";
+import {
+  maybeCaptureReview,
+  whatChangedForProject,
+  simulateScenario,
+  listReviews,
+  insertReview,
+  buildDecisionTimeline,
+  buildDecisionBoard,
+  trendFromDelta,
+  validateInterventionPayload,
+  interventionWriteFields,
+} from "./decision.js";
 
 seedIfEmpty();
 
@@ -96,6 +109,13 @@ function intel(project) {
   return { ...insights, forecast, outlook };
 }
 
+function persistIntel(project, { capture = true, source = "auto" } = {}) {
+  const insights = intel(project);
+  recordHealth(project.id, insights);
+  if (capture) maybeCaptureReview(db, project, insights, source);
+  return insights;
+}
+
 const HEALTH_RANK = { on_track: 0, watch: 1, at_risk: 2, critical: 3 };
 
 function recordHealth(projectId, insights) {
@@ -121,8 +141,7 @@ function loadVisible(user) {
     .map((id) => enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)))
     .filter(Boolean)
     .map((p) => {
-      const insights = intel(p);
-      recordHealth(p.id, insights);
+      const insights = persistIntel(p);
       syncProjectAlerts(db, {
         project: p,
         alerts: deriveSmartAlerts({
@@ -277,6 +296,14 @@ function lifecycleDateError(fields) {
   }
   const tErr = validateTenderStatus(fields.tender_status);
   if (tErr) return tErr;
+  for (const key of ["commencement_status", "testing_status", "commissioning_status", "handover_status"]) {
+    if (fields[key] && !isLifecycleStatus(fields[key])) {
+      return "Stage status must be Not Started, In Progress, Completed, Delayed, Blocked, or Not Applicable.";
+    }
+  }
+  if (!Number.isFinite(fields.tender_contract_value) || !Number.isFinite(fields.award_contract_value)) {
+    return "Contract values must be numbers.";
+  }
   if (fields.tender_contract_value < 0 || fields.award_contract_value < 0) {
     return "Contract values cannot be negative.";
   }
@@ -717,8 +744,7 @@ app.post("/api/projects", authRequired, requireRole("admin", "project_manager"),
   );
   logAudit(req.user, { action: "created project", entity: "project", entityId: info.lastInsertRowid, projectId: info.lastInsertRowid, detail: fields.name, next: fields.status });
   const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(info.lastInsertRowid));
-  const insights = intel(project);
-  recordHealth(project.id, insights);
+  const insights = persistIntel(project);
   res.status(201).json({ ...project, insights });
 });
 
@@ -728,7 +754,95 @@ app.get("/api/projects/:id", authRequired, (req, res) => {
   if (!row) return;
   if (!canAccessProject(req.user, id)) return res.status(403).json({ error: "No access to this project." });
   const project = enrichProject(row);
-  res.json({ ...project, insights: intel(project), audit: listAudit({ projectId: id, limit: 40 }) });
+  const insights = persistIntel(project);
+  res.json({ ...project, insights, audit: listAudit({ projectId: id, limit: 40 }) });
+});
+
+app.get("/api/projects/:id/what-changed", authRequired, (req, res) => {
+  const id = parseId(req.params.id);
+  const row = projectOr404(id, res);
+  if (!row) return;
+  if (!canAccessProject(req.user, id)) return res.status(403).json({ error: "No access to this project." });
+  const project = enrichProject(row);
+  const insights = persistIntel(project);
+  res.json(whatChangedForProject(db, project, insights));
+});
+
+app.post("/api/projects/:id/reviews", authRequired, requireRole("admin", "project_manager"), (req, res) => {
+  const id = parseId(req.params.id);
+  const row = projectOr404(id, res);
+  if (!row) return;
+  if (!canManageProject(req.user, id)) return res.status(403).json({ error: "Cannot record a review for this project." });
+  const project = enrichProject(row);
+  const insights = persistIntel(project, { capture: false });
+  const review = insertReview(db, project, insights, "review");
+  res.status(201).json(review);
+});
+
+app.post("/api/projects/:id/what-if", authRequired, (req, res) => {
+  const id = parseId(req.params.id);
+  const row = projectOr404(id, res);
+  if (!row) return;
+  if (!canAccessProject(req.user, id)) return res.status(403).json({ error: "No access to this project." });
+  const project = enrichProject(row);
+  const insights = intel(project);
+  const before = JSON.stringify({ resources: project.resources, tasks: project.tasks });
+  try {
+    const result = simulateScenario(project, insights, req.body || {});
+    const after = JSON.stringify({ resources: project.resources, tasks: project.tasks });
+    if (before !== after) return res.status(500).json({ error: "Simulation attempted to mutate live project state." });
+    res.json(result);
+  } catch (err) {
+    const status = err.status || 400;
+    res.status(status).json({ error: err.message || "Invalid scenario." });
+  }
+});
+
+app.get("/api/projects/:id/decision-timeline", authRequired, (req, res) => {
+  const id = parseId(req.params.id);
+  const row = projectOr404(id, res);
+  if (!row) return;
+  if (!canAccessProject(req.user, id)) return res.status(403).json({ error: "No access to this project." });
+  const project = enrichProject(row);
+  const insights = persistIntel(project);
+  const reviewsAsc = listReviews(db, id).slice().reverse();
+  const events = buildDecisionTimeline(
+    project,
+    insights,
+    reviewsAsc,
+    listAudit({ projectId: id, limit: 80 }),
+    project.interventions || []
+  );
+  res.json({ events, disclaimer: "Timeline combines lifecycle dates, review-to-review change, interventions, and the activity log." });
+});
+
+app.get("/api/decision-board", authRequired, (req, res) => {
+  const projects = loadVisible(req.user);
+  const rows = projects.map((p) => {
+    const insights = p.insights;
+    const changed = whatChangedForProject(db, p, insights);
+    const rec = changed.recommended_intervention;
+    const recent = changed.changes?.find((c) => c.direction === "worse") || changed.primary_driver;
+    return {
+      id: p.id,
+      name: p.name,
+      health_score: insights.health?.score,
+      health_band: insights.health?.band,
+      previous_band: changed.previous?.health_band || null,
+      trend: trendFromDelta(changed.health_delta),
+      forecast_slippage_days: insights.forecast?.estimated_slippage_days,
+      bottleneck: insights.outlook?.bottleneck?.label || changed.primary_driver?.label || null,
+      recent_change: recent
+        ? `${recent.label || recent.field}: ${Array.isArray(recent.from) ? recent.from.join(", ") : recent.from} → ${Array.isArray(recent.to) ? recent.to.join(", ") : recent.to}`
+        : changed.available
+          ? "No material change since the last distinct review"
+          : "No previous review stored",
+      recommended_action: rec?.action || insights.outlook?.recommended_action,
+      primary_driver: changed.primary_driver,
+      health_delta: changed.health_delta,
+    };
+  });
+  res.json(buildDecisionBoard(rows));
 });
 
 app.put("/api/projects/:id", authRequired, requireRole("admin", "project_manager"), (req, res) => {
@@ -761,8 +875,7 @@ app.put("/api/projects/:id", authRequired, requireRole("admin", "project_manager
     next: `status=${fields.status}; revised_cost=${fields.revised_cost}; expenditure=${fields.expenditure}; funds_released=${fields.funds_released}; reported_physical_progress=${fields.reported_physical_progress}`,
   });
   const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id));
-  const insights = intel(project);
-  recordHealth(id, insights);
+  const insights = persistIntel(project);
   res.json({ ...project, insights });
 });
 
@@ -773,6 +886,7 @@ app.delete("/api/projects/:id", authRequired, requireRole("admin", "project_mana
   if (!canManageProject(req.user, id)) {
     return res.status(403).json({ error: "Only the manager or an admin can delete this project." });
   }
+  db.prepare("DELETE FROM project_reviews WHERE project_id = ?").run(id);
   db.prepare("DELETE FROM resource_readiness WHERE project_id = ?").run(id);
   db.prepare("DELETE FROM lifecycle_stages WHERE project_id = ?").run(id);
   db.prepare("DELETE FROM alerts WHERE project_id = ?").run(id);
@@ -1077,7 +1191,7 @@ app.get("/api/briefing", authRequired, (req, res) => {
   const interventions = visibleIds.length
     ? db
         .prepare(
-          `SELECT * FROM interventions WHERE status != 'resolved' AND project_id IN (${visibleIds.map(() => "?").join(",")}) ORDER BY due_date LIMIT 8`
+          `SELECT * FROM interventions WHERE status NOT IN ('resolved', 'cancelled') AND project_id IN (${visibleIds.map(() => "?").join(",")}) ORDER BY due_date LIMIT 8`
         )
         .all(...visibleIds)
     : [];
@@ -1292,7 +1406,7 @@ app.post("/api/projects/:id/issues", authRequired, requireRole("admin", "project
     );
   const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id));
   logAudit(req.user, { action: "opened issue", entity: "issue", entityId: info.lastInsertRowid, projectId: id, detail: title });
-  res.status(201).json({ ...project, insights: intel(project), nlp_suggestion: suggestion });
+  res.status(201).json({ ...project, insights: persistIntel(project), nlp_suggestion: suggestion });
 });
 
 app.put("/api/issues/:id", authRequired, requireRole("admin", "project_manager"), (req, res) => {
@@ -1332,26 +1446,41 @@ app.post("/api/projects/:id/interventions", authRequired, requireRole("admin", "
   const row = projectOr404(id, res);
   if (!row) return;
   if (!canManageProject(req.user, id)) return res.status(403).json({ error: "Cannot create interventions." });
-  const action = String(req.body?.action || "").trim();
-  if (!action) return res.status(400).json({ error: "Action required." });
+  const errors = validateInterventionPayload(req.body || {});
+  if (errors.length) return res.status(400).json({ error: errors[0] });
+  const fields = interventionWriteFields(req.body || {});
   const info = db
     .prepare(
-      `INSERT INTO interventions (project_id, issue_id, action, authority, assigned_officer, due_date, priority, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO interventions (
+        project_id, issue_id, action, recommended_action, actual_action, trigger_summary, outcome,
+        authority, assigned_officer, due_date, priority, status, created_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
-      req.body?.issue_id || null,
-      action,
-      String(req.body?.authority || ""),
-      String(req.body?.assigned_officer || ""),
-      req.body?.due_date || null,
-      req.body?.priority || "high",
-      "open",
-      new Date().toISOString()
+      fields.issue_id,
+      fields.action,
+      fields.recommended_action,
+      fields.actual_action,
+      fields.trigger_summary,
+      fields.outcome,
+      fields.authority,
+      fields.assigned_officer,
+      fields.due_date,
+      fields.priority,
+      fields.status,
+      new Date().toISOString(),
+      fields.completed_at
     );
-  logAudit(req.user, { action: "created intervention", entity: "intervention", entityId: info.lastInsertRowid, projectId: id, detail: action });
-  res.status(201).json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)));
+  logAudit(req.user, {
+    action: "created intervention",
+    entity: "intervention",
+    entityId: info.lastInsertRowid,
+    projectId: id,
+    detail: fields.trigger_summary || fields.action,
+  });
+  const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id));
+  res.status(201).json({ ...project, insights: persistIntel(project) });
 });
 
 app.put("/api/interventions/:id", authRequired, requireRole("admin", "project_manager"), (req, res) => {
@@ -1359,13 +1488,24 @@ app.put("/api/interventions/:id", authRequired, requireRole("admin", "project_ma
   const iv = db.prepare("SELECT * FROM interventions WHERE id = ?").get(id);
   if (!iv) return res.status(404).json({ error: "Intervention not found." });
   if (!canManageProject(req.user, iv.project_id)) return res.status(403).json({ error: "Cannot update this intervention." });
-  db.prepare("UPDATE interventions SET action=?, authority=?, assigned_officer=?, due_date=?, priority=?, status=? WHERE id=?").run(
-    String(req.body?.action ?? iv.action),
-    String(req.body?.authority ?? iv.authority),
-    String(req.body?.assigned_officer ?? iv.assigned_officer),
-    req.body?.due_date ?? iv.due_date,
-    String(req.body?.priority ?? iv.priority),
-    String(req.body?.status ?? iv.status),
+  const errors = validateInterventionPayload({ ...iv, ...req.body, action: req.body?.action ?? iv.action }, { partial: true });
+  if (errors.length) return res.status(400).json({ error: errors[0] });
+  const fields = interventionWriteFields(req.body || {}, iv);
+  db.prepare(
+    `UPDATE interventions SET action=?, recommended_action=?, actual_action=?, trigger_summary=?, outcome=?,
+     authority=?, assigned_officer=?, due_date=?, priority=?, status=?, completed_at=? WHERE id=?`
+  ).run(
+    fields.action,
+    fields.recommended_action,
+    fields.actual_action,
+    fields.trigger_summary,
+    fields.outcome,
+    fields.authority,
+    fields.assigned_officer,
+    fields.due_date,
+    fields.priority,
+    fields.status,
+    fields.completed_at,
     id
   );
   logAudit(req.user, {
@@ -1373,11 +1513,12 @@ app.put("/api/interventions/:id", authRequired, requireRole("admin", "project_ma
     entity: "intervention",
     entityId: id,
     projectId: iv.project_id,
-    detail: `${iv.status} → ${req.body?.status ?? iv.status}`,
+    detail: `${iv.status} → ${fields.status}`,
     previous: iv.status,
-    next: req.body?.status ?? iv.status,
+    next: fields.status,
   });
-  res.json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(iv.project_id)));
+  const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(iv.project_id));
+  res.json({ ...project, insights: persistIntel(project) });
 });
 
 app.post("/api/nlp/classify", authRequired, (req, res) => {
@@ -1444,7 +1585,7 @@ app.post("/api/projects/:id/preconstructions", authRequired, requireRole("admin"
     next: req.body?.status || "not_started",
   });
   const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id));
-  res.status(201).json({ ...project, insights: intel(project) });
+  res.status(201).json({ ...project, insights: persistIntel(project) });
 });
 
 app.put("/api/preconstructions/:id", authRequired, requireRole("admin", "project_manager"), (req, res) => {
@@ -1480,7 +1621,7 @@ app.put("/api/preconstructions/:id", authRequired, requireRole("admin", "project
     next: req.body?.status ?? item.status,
   });
   const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(item.project_id));
-  res.json({ ...project, insights: intel(project) });
+  res.json({ ...project, insights: persistIntel(project) });
 });
 
 app.put("/api/projects/:id/lifecycle/:stage", authRequired, requireRole("admin", "project_manager"), (req, res) => {
@@ -1516,7 +1657,7 @@ app.put("/api/projects/:id/lifecycle/:stage", authRequired, requireRole("admin",
     next: req.body?.status ?? existing.status,
   });
   const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id));
-  res.json({ ...project, insights: intel(project) });
+  res.json({ ...project, insights: persistIntel(project) });
 });
 
 app.put("/api/projects/:id/resources/:category", authRequired, requireRole("admin", "project_manager"), (req, res) => {
@@ -1552,7 +1693,7 @@ app.put("/api/projects/:id/resources/:category", authRequired, requireRole("admi
     next: req.body?.status ?? existing.status,
   });
   const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id));
-  res.json({ ...project, insights: intel(project) });
+  res.json({ ...project, insights: persistIntel(project) });
 });
 
 app.post("/api/projects/:id/quick-update", authRequired, requireRole("admin", "project_manager"), (req, res) => {
@@ -1601,7 +1742,7 @@ app.post("/api/projects/:id/quick-update", authRequired, requireRole("admin", "p
     next: suggestion.category,
   });
   const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id));
-  res.status(201).json({ ...project, insights: intel(project), nlp_suggestion: suggestion });
+  res.status(201).json({ ...project, insights: persistIntel(project), nlp_suggestion: suggestion });
 });
 
 app.post("/api/ingest/projects", authRequired, requireRole("admin", "project_manager"), (req, res) => {
@@ -1700,7 +1841,7 @@ function briefingBundle(req) {
   const interventions = visibleIds.length
     ? db
         .prepare(
-          `SELECT * FROM interventions WHERE status != 'resolved' AND project_id IN (${visibleIds.map(() => "?").join(",")}) ORDER BY due_date LIMIT 12`
+          `SELECT * FROM interventions WHERE status NOT IN ('resolved', 'cancelled') AND project_id IN (${visibleIds.map(() => "?").join(",")}) ORDER BY due_date LIMIT 12`
         )
         .all(...visibleIds)
     : [];

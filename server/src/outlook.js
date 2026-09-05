@@ -24,7 +24,7 @@ export function buildOutlook({
   ];
   const topNlp = nlpSources.sort((a, b) => b.confidence - a.confidence)[0] || null;
   const delayedClearances = preconstructions.filter((c) => c.status === "delayed" || c.status === "blocked");
-  const openIv = interventions.filter((i) => i.status !== "resolved");
+  const openIv = interventions.filter((i) => i.status !== "resolved" && i.status !== "cancelled");
   const stage = currentStage(lifecycle_stages);
   const why = [
     ...(insights.health?.reasons || []).slice(0, 4).map((r) => r.text),

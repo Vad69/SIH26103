@@ -4,6 +4,7 @@
  */
 import { daysBetween, todayISO } from "./insights.js";
 import { delayLabel } from "./constants.js";
+import { delayedStagesForPenalty } from "./lifecycle.js";
 
 function addDays(iso, days) {
   const d = new Date(`${iso}T00:00:00Z`);
@@ -17,7 +18,10 @@ function riskBand(slippageDays, costRisk) {
   return "low";
 }
 
-export function forecastProject({ project, insights, preconstructions = [], lifecycle_stages = [], resources = [] }, now = new Date()) {
+export function forecastProject(
+  { project, insights, preconstructions = [], lifecycle_stages = [], resources = [], extraSlippageDays = 0 },
+  now = new Date()
+) {
   const today = todayISO(now);
   if (project.status === "completed") {
     return {
@@ -50,11 +54,16 @@ export function forecastProject({ project, insights, preconstructions = [], life
   extra += delayedClearances.length * 18;
   extra += Number(insights.overdue_critical_count || 0) * 12;
   extra += Math.max(0, Number(finance.time_overrun_days || 0)) * 0.15;
-  const delayedStages = lifecycle_stages.filter((s) => s.status === "delayed" || s.status === "blocked");
+  const delayedStages = delayedStagesForPenalty(lifecycle_stages, {
+    skipCommencement: Number(insights.commencement_delay_days || 0) > 0,
+    skipPreconstruction: delayedClearances.length > 0,
+    skipResourceMobilisation: resources.some((r) => r.status === "delayed" || r.status === "blocked"),
+  });
   const blockedRes = resources.filter((r) => r.status === "delayed" || r.status === "blocked");
   extra += delayedStages.length * 10;
   extra += blockedRes.length * 14;
   extra += Math.max(0, Number(insights.commencement_delay_days || 0)) * 0.4;
+  extra += Math.max(0, Number(extraSlippageDays) || 0);
 
   const baselineEnd = finance.revised_end || finance.original_end || project.end_date;
   const estimated = addDays(today, extra);

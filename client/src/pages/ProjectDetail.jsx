@@ -6,12 +6,13 @@ import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import Timeline from "../components/Timeline.jsx";
 import LifecycleStrip from "../components/LifecycleStrip.jsx";
-import { Card, Field, InsightBanner, ProgressBar, StatusPill, inputClass } from "../components/ui.jsx";
+import { WhatChangedPanel, WhatIfPanel, DecisionTimelinePanel, CreateInterventionFromRecommendation } from "../components/DecisionPanels.jsx";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
 const tabs = [
   "Outlook",
+  "Decisions",
   "Lifecycle",
   "Risk",
   "Finance",
@@ -50,14 +51,45 @@ export default function ProjectDetail() {
   const [memberId, setMemberId] = useState("");
   const [meta, setMeta] = useState({ delay_reasons: [] });
   const [issueForm, setIssueForm] = useState({ title: "", category: "procurement", severity: "high", owner: "", intervention: "", due_date: "" });
-  const [ivForm, setIvForm] = useState({ action: "", authority: "", assigned_officer: "", due_date: "", priority: "high" });
+  const [ivForm, setIvForm] = useState({
+    action: "",
+    authority: "",
+    assigned_officer: "",
+    due_date: "",
+    priority: "high",
+    recommended_action: "",
+    trigger_summary: "",
+    outcome: "",
+  });
   const [preconForm, setPreconForm] = useState({ name: "", category: "environmental_clearance", status: "not_started", planned_completion: "", authority: "", remarks: "" });
   const [quick, setQuick] = useState({ reported_progress: "", status: "active", blocker: "", remarks: "" });
   const [nlpLive, setNlpLive] = useState(null);
+  const [whatChanged, setWhatChanged] = useState(null);
+  const [whatChangedError, setWhatChangedError] = useState("");
+  const [whatChangedLoading, setWhatChangedLoading] = useState(true);
+  const [timeline, setTimeline] = useState([]);
+  const [timelineError, setTimelineError] = useState("");
+  const [timelineLoading, setTimelineLoading] = useState(true);
+
+  function loadDecision() {
+    setWhatChangedLoading(true);
+    setTimelineLoading(true);
+    api(`/api/projects/${id}/what-changed`)
+      .then(setWhatChanged)
+      .catch((e) => setWhatChangedError(e.message))
+      .finally(() => setWhatChangedLoading(false));
+    api(`/api/projects/${id}/decision-timeline`)
+      .then((d) => setTimeline(d.events || []))
+      .catch((e) => setTimelineError(e.message))
+      .finally(() => setTimelineLoading(false));
+  }
 
   function load() {
     return api(`/api/projects/${id}`)
-      .then(setProject)
+      .then((p) => {
+        setProject(p);
+        loadDecision();
+      })
       .catch((e) => setError(e.message));
   }
 
@@ -209,7 +241,6 @@ export default function ProjectDetail() {
         <Card>
           <p className="text-xs text-ink/50 uppercase">Manager</p>
           <p className="mt-1 text-sm">{project.manager?.name}</p>
-          <p className="mt-2 text-[11px] text-ink/50">Data source: {(project.data_source || "manual").replace("_", " ")}</p>
         </Card>
       </div>
 
@@ -435,6 +466,10 @@ export default function ProjectDetail() {
         </div>
       ) : null}
 
+      {tab === "Decisions" ? (
+        <DecisionTimelinePanel events={timeline} loading={timelineLoading} error={timelineError} />
+      ) : null}
+
       {tab === "Timeline" ? (
         <Card>
           <h3 className="font-medium">Gantt-style timeline</h3>
@@ -480,6 +515,15 @@ export default function ProjectDetail() {
             <p className="mt-3 text-sm font-medium">Recommended action: {project.insights?.outlook?.recommended_action}</p>
             <p className="mt-2 text-xs text-ink/45">{project.insights?.outlook?.disclaimer}</p>
           </Card>
+          <WhatChangedPanel data={whatChanged} loading={whatChangedLoading} error={whatChangedError} />
+          <WhatIfPanel projectId={id} canRun={!whatChangedLoading} onError={setError} />
+          <CreateInterventionFromRecommendation
+            projectId={id}
+            recommendation={whatChanged?.recommended_intervention}
+            canManage={canManage}
+            onSaved={load}
+            onError={setError}
+          />
           {canManage ? (
             <Card>
               <h3 className="font-medium">Quick ground update</h3>
@@ -1058,13 +1102,19 @@ export default function ProjectDetail() {
                 onSubmit={(e) => {
                   e.preventDefault();
                   api(`/api/projects/${id}/interventions`, { method: "POST", body: JSON.stringify(ivForm) }).then(() => {
-                    setIvForm({ action: "", authority: "", assigned_officer: "", due_date: "", priority: "high" });
+                    setIvForm({ action: "", authority: "", assigned_officer: "", due_date: "", priority: "high", recommended_action: "", trigger_summary: "", outcome: "" });
                     load();
                   });
                 }}
               >
                 <div className="md:col-span-2">
                   <Field label="Action required"><input className={inputClass} value={ivForm.action} onChange={(e) => setIvForm({ ...ivForm, action: e.target.value })} required /></Field>
+                </div>
+                <div className="md:col-span-2">
+                  <Field label="Why this intervention"><input className={inputClass} value={ivForm.trigger_summary} onChange={(e) => setIvForm({ ...ivForm, trigger_summary: e.target.value })} /></Field>
+                </div>
+                <div className="md:col-span-2">
+                  <Field label="Recommended action"><input className={inputClass} value={ivForm.recommended_action} onChange={(e) => setIvForm({ ...ivForm, recommended_action: e.target.value })} /></Field>
                 </div>
                 <Field label="Responsible authority"><input className={inputClass} value={ivForm.authority} onChange={(e) => setIvForm({ ...ivForm, authority: e.target.value })} /></Field>
                 <Field label="Assigned officer"><input className={inputClass} value={ivForm.assigned_officer} onChange={(e) => setIvForm({ ...ivForm, assigned_officer: e.target.value })} /></Field>
@@ -1081,20 +1131,40 @@ export default function ProjectDetail() {
             </Card>
           ) : null}
           {(project.interventions || []).map((iv) => (
-            <Card key={iv.id} className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="font-medium">{iv.action}</p>
-                <p className="text-sm text-ink/60">{iv.authority} · {iv.assigned_officer} · {iv.due_date || "no date"}</p>
+            <Card key={iv.id} className="space-y-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium">{iv.action}</p>
+                  <p className="text-sm text-ink/60">{iv.authority} · {iv.assigned_officer || "unassigned"} · {iv.due_date || "no date"}</p>
+                  {iv.trigger_summary ? <p className="mt-1 text-sm text-ink/65">Why: {iv.trigger_summary}</p> : null}
+                  {iv.recommended_action ? <p className="text-sm text-ink/65">Recommended: {iv.recommended_action}</p> : null}
+                  {iv.outcome ? <p className="text-sm">Outcome: {iv.outcome}</p> : null}
+                </div>
+                <StatusPill status={iv.status} />
               </div>
               {canManage ? (
-                <select className="rounded border border-sand px-2 py-1 text-sm" value={iv.status} onChange={(e) => api(`/api/interventions/${iv.id}`, { method: "PUT", body: JSON.stringify({ ...iv, status: e.target.value }) }).then(load)}>
-                  <option value="open">Open</option>
-                  <option value="in_progress">In progress</option>
-                  <option value="resolved">Resolved</option>
-                </select>
-              ) : (
-                <StatusPill status={iv.status} />
-              )}
+                <div className="flex flex-wrap items-end gap-2">
+                  <select
+                    className="rounded border border-sand px-2 py-1 text-sm"
+                    value={iv.status}
+                    onChange={(e) => api(`/api/interventions/${iv.id}`, { method: "PUT", body: JSON.stringify({ ...iv, status: e.target.value }) }).then(load).catch((err) => setError(err.message))}
+                  >
+                    <option value="open">Open</option>
+                    <option value="in_progress">In progress</option>
+                    <option value="resolved">Completed</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                  <input
+                    className="min-w-[12rem] flex-1 rounded border border-sand px-2 py-1 text-sm"
+                    placeholder="Outcome / notes"
+                    defaultValue={iv.outcome || ""}
+                    onBlur={(e) => {
+                      if (e.target.value === (iv.outcome || "")) return;
+                      api(`/api/interventions/${iv.id}`, { method: "PUT", body: JSON.stringify({ ...iv, outcome: e.target.value }) }).then(load).catch((err) => setError(err.message));
+                    }}
+                  />
+                </div>
+              ) : null}
             </Card>
           ))}
         </div>

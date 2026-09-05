@@ -679,7 +679,12 @@ function seedLifecycleDemo() {
         updRes.run(r.status, r.delay || "", r.remarks || "", project.id, r.category);
       }
     }
-    if (!project.tender_status || project.tender_status === "not_started") {
+    if (
+      (!project.tender_status || project.tender_status === "not_started") &&
+      !project.award_date &&
+      !project.work_order_number &&
+      !project.planned_commencement_date
+    ) {
       const m = spec.meta;
       metaSql.run(
         m.tender_status || "not_started",
@@ -747,7 +752,7 @@ function seedLifecycleDemo() {
     }
   }
   db.prepare("UPDATE tasks SET wbs_group = 'procurement' WHERE title LIKE '%tablet inventory%' AND (wbs_group IS NULL OR wbs_group = '' OR wbs_group = 'other')").run();
-  db.prepare("UPDATE tasks SET wbs_group = 'testing' WHERE title LIKE '%Load test%' OR title LIKE '%WCAG%'").run();
+  db.prepare("UPDATE tasks SET wbs_group = 'testing' WHERE (title LIKE '%Load test%' OR title LIKE '%WCAG%') AND (wbs_group IS NULL OR wbs_group = '' OR wbs_group = 'other')").run();
 }
 
 export function bootstrap() {
@@ -778,7 +783,49 @@ export function seedIfEmpty() {
   const result = bootstrap();
   seedDecisionSupport();
   seedLifecycleDemo();
+  seedDecisionReviews();
   return result;
+}
+
+function seedDecisionReviews() {
+  const project = db.prepare("SELECT * FROM projects WHERE name = ?").get("PLFS Digital Field Operations");
+  if (!project) return;
+  const n = db.prepare("SELECT COUNT(*) AS n FROM project_reviews WHERE project_id = ?").get(project.id).n;
+  if (n > 0) return;
+  const prior = {
+    captured_at: "2026-06-20T10:00:00.000Z",
+    health_score: 72,
+    health_band: "watch",
+    physical_progress: 42,
+    financial_progress: 38,
+    expenditure: 82,
+    forecast_slippage_days: 12,
+    forecast_risk: "low",
+    forecast_finish: "2026-10-12",
+    overdue_critical: 0,
+    overdue_milestones: 0,
+    resources: {
+      human_resources: "ready",
+      materials: "partial",
+      equipment: "partial",
+      logistics: "ready",
+      site_readiness: "partial",
+    },
+    clearances: [],
+    commencement_delay_days: 23,
+    current_stage: "execution",
+    bottleneck: "Procurement",
+    top_reason: "State tablet tenders slipped two cycles.",
+    recommended_action: "Watch-list the project this month. Confirm whether system-calculated progress can catch the original timeline.",
+    open_alerts: 1,
+    tender_status: "delayed",
+  };
+  db.prepare("INSERT INTO project_reviews (project_id, created_at, source, state_json) VALUES (?, ?, ?, ?)").run(
+    project.id,
+    "2026-06-20T10:00:00.000Z",
+    "seed",
+    JSON.stringify(prior)
+  );
 }
 
 if (process.argv[1]?.endsWith("seed.js")) {
