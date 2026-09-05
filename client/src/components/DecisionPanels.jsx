@@ -228,8 +228,9 @@ export function WhatIfPanel({ projectId, canRun, onError }) {
               <p>Estimated completion: {result.scenario.forecast_finish || "—"}</p>
               <p>Physical progress: {result.scenario.physical_progress}%</p>
               <p className="mt-2 font-medium">
-                Expected difference: {result.delta.expected_recovery_days} days
+                Scenario difference: {result.delta.expected_recovery_days} days
                 {result.delta.health_score ? ` · health ${result.delta.health_score > 0 ? "+" : ""}${result.delta.health_score}` : ""}
+                <span className="font-normal text-ink/50"> (scenario only, not a guaranteed outcome)</span>
               </p>
             </div>
           </div>
@@ -297,6 +298,7 @@ export function CreateInterventionFromRecommendation({ projectId, recommendation
     <Card>
       <p className="text-xs uppercase text-ink/50">Officer action</p>
       <h3 className="font-medium mt-1">Create intervention from recommendation</h3>
+      <p className="mt-1 text-xs text-ink/50">Records the officer action. It does not by itself recover project health.</p>
       <form
         className="mt-3 grid gap-3 md:grid-cols-2"
         onSubmit={(e) => {
