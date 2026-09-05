@@ -142,9 +142,22 @@ export function diffStates(previous, current) {
   const changes = [];
   if (!previous || !current) return { changes, primary_driver: null };
 
+function evidenceFor(field) {
+  if (field === "forecast_slippage_days" || field === "forecast_risk") return "forecast";
+  if (field === "health_score" || field === "health_band") return "analysis";
+  return "observed";
+}
+
+function evidenceLabel(kind) {
+  if (kind === "forecast") return "Forecast";
+  if (kind === "analysis") return "Rule-based health";
+  return "Observed";
+}
+
   const push = (field, from, to, extra = {}) => {
     if (from === to) return;
-    changes.push({ field, from, to, ...extra });
+    const evidence = extra.evidence || evidenceFor(field);
+    changes.push({ field, from, to, evidence, evidence_label: evidenceLabel(evidence), ...extra });
   };
 
   const hs = num(current.health_score) - num(previous.health_score);
@@ -239,6 +252,8 @@ export function diffStates(previous, current) {
         to_status: b,
         direction: worse ? "worse" : resourceSeverity(b) < resourceSeverity(a) ? "better" : "info",
         label: resourceLabel(cat),
+        evidence: "observed",
+        evidence_label: "Observed",
       });
     }
   }
@@ -256,6 +271,8 @@ export function diffStates(previous, current) {
       removed,
       direction: added.length > removed.length ? "worse" : removed.length > added.length ? "better" : "info",
       label: "Clearance status",
+      evidence: "observed",
+      evidence_label: "Observed",
     });
   }
 
@@ -308,43 +325,75 @@ export function whatChangedFromReviews(reviewsDesc, currentState) {
   };
 }
 
+export function whyItMatters(driver, changes) {
+  if (!driver) return "No review-to-review difference is stored yet.";
+  if (driver.field === "forecast_slippage_days") {
+    return "The prototype trajectory estimates more (or less) slippage from current rates of progress. This is a forecast, not a guaranteed completion date.";
+  }
+  if (driver.field === "resources") {
+    return "This readiness change is recorded on the project and is an input to both rule-based health and the prototype forecast.";
+  }
+  if (driver.field === "overdue_critical" || driver.field === "overdue_milestones") {
+    return "Overdue critical work is observed in the task/milestone register and directly reduces the critical-task and milestone health factors.";
+  }
+  if (driver.field === "physical_progress") {
+    return "System-calculated physical progress (task average) moved versus the previous review. That gap feeds the physical-progress health factor.";
+  }
+  const worse = (changes || []).filter((c) => c.direction === "worse").length;
+  if (worse > 1) {
+    return "Several recorded fields moved against the plan. The item above is the ranked likely driver among those observed changes — not a confirmed single cause.";
+  }
+  return "This field changed between reviews and is used by the existing monitoring rules.";
+}
+
+export function driverKind(changes, driver) {
+  if (!driver) return null;
+  const worseObserved = (changes || []).filter((c) => c.direction === "worse" && (c.evidence || evidenceFor(c.field)) === "observed");
+  if (worseObserved.length > 1) return "likely_driver";
+  if ((driver.evidence || evidenceFor(driver.field)) === "forecast") return "forecast";
+  if ((driver.evidence || evidenceFor(driver.field)) === "analysis") return "likely_driver";
+  return "observed";
+}
+
 export function recommendedFromChange(what, insights) {
   const driver = what?.primary_driver;
   const fallback = insights?.outlook?.recommended_action || insights?.health?.intervention || "Review the flagged bottleneck and assign a time-bound officer action.";
+  let rec;
   if (!driver) {
-    return { action: fallback, why: insights?.outlook?.why?.[0] || "No review-to-review change is stored yet." };
-  }
-  if (driver.field === "resources") {
-    return {
+    rec = { action: fallback, why: insights?.outlook?.why?.[0] || "No review-to-review change is stored yet." };
+  } else if (driver.field === "resources") {
+    rec = {
       action: `Escalate ${driver.label} readiness and review the related procurement / supply milestone.`,
       why: `${driver.label} changed from ${driver.from} to ${driver.to}.`,
     };
-  }
-  if (driver.field === "overdue_milestones") {
-    return {
+  } else if (driver.field === "overdue_milestones") {
+    rec = {
       action: "Re-baseline the overdue milestone and assign an owner with a recovery date.",
       why: `Overdue milestones ${driver.from} → ${driver.to}.`,
     };
-  }
-  if (driver.field === "overdue_critical") {
-    return {
+  } else if (driver.field === "overdue_critical") {
+    rec = {
       action: "Review overdue critical tasks and the assigned intervention.",
       why: `Overdue critical tasks ${driver.from} → ${driver.to}.`,
     };
-  }
-  if (driver.field === "physical_progress") {
-    return {
+  } else if (driver.field === "physical_progress") {
+    rec = {
       action: "Confirm site constraints blocking physical progress and set a weekly recovery target.",
       why: `Physical progress ${driver.from}% → ${driver.to}%.`,
     };
-  }
-  if (driver.field === "clearances") {
-    return {
+  } else if (driver.field === "clearances") {
+    rec = {
       action: "Escalate pending clearances with the responsible authority.",
       why: "Delayed or blocked clearances increased.",
     };
+  } else {
+    rec = { action: fallback, why: `${driver.label || driver.field} changed.` };
   }
-  return { action: fallback, why: `${driver.label || driver.field} changed.` };
+  return {
+    ...rec,
+    why_it_matters: whyItMatters(driver, what?.changes),
+    driver_kind: driverKind(what?.changes, driver),
+  };
 }
 
 export function cloneDeep(value) {
@@ -487,8 +536,29 @@ export function simulateScenario(project, insights, scenario) {
     }
   }
 
+  const assumptions = [
+    "Scenario only. The live project is not modified.",
+    "Existing project records are retained except the scenario inputs below.",
+    "Rule-based five-factor health is reused (weights unchanged).",
+    "Prototype trajectory forecast is reused (not a trained ML model).",
+  ];
+  if (scenario?.resource_category) {
+    assumptions.push(
+      `${resourceLabel(scenario.resource_category)} is treated as ready in the scenario` +
+        (remainingWait > 0 ? `, with ${remainingWait} remaining calendar day(s) added to the forecast.` : ".")
+    );
+  }
+  if (scenario?.weekly_progress_pct) {
+    assumptions.push(`Each task's recorded progress is increased by ${scenario.weekly_progress_pct} percentage point(s) for a one-week illustration.`);
+  }
+  if (scenario?.progress_delta) {
+    assumptions.push(`Each task's recorded progress is shifted by ${scenario.progress_delta} percentage point(s).`);
+  }
+
   return {
     kind: "scenario_simulation",
+    scenario_only: true,
+    assumptions,
     disclaimer:
       "Deterministic simulation using the same five-factor health rules and prototype forecast as live monitoring. Not a guaranteed real-world prediction. The live project is not modified.",
     current: {
@@ -554,14 +624,44 @@ export function whatChangedForProject(db, project, insights) {
   const reviews = listReviews(db, project.id);
   const result = whatChangedFromReviews(reviews, current);
   const rec = recommendedFromChange(result, insights);
-  return { ...result, recommended_intervention: rec };
+  const kind = driverKind(result.changes, result.primary_driver);
+  return {
+    ...result,
+    recommended_intervention: rec,
+    why_it_matters: rec.why_it_matters,
+    driver_kind: kind,
+    empty_reason: result.available ? null : "No previous review is available for comparison.",
+  };
+}
+
+export function eventLane(type) {
+  if (["health_down", "forecast_up", "resource_risk", "milestone", "critical_task", "commencement_delay"].includes(type)) {
+    return "consequence";
+  }
+  if (["intervention_created"].includes(type)) return "response";
+  if (["intervention_completed", "intervention_cancelled", "health_up", "forecast_down", "resource_recovery"].includes(type)) {
+    return "outcome";
+  }
+  return "event";
+}
+
+function dedupeTimeline(events) {
+  const seen = new Set();
+  const out = [];
+  for (const e of events) {
+    const key = `${e.at}|${e.type}|${e.title}|${e.detail || ""}|${e.intervention_id || ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(e);
+  }
+  return out;
 }
 
 export function buildDecisionTimeline(project, insights, reviewsAsc, auditRows, interventions) {
   const events = [];
   const push = (at, type, title, detail, extra = {}) => {
     if (!at) return;
-    events.push({ at, type, title, detail: detail || null, ...extra });
+    events.push({ at, type, title, detail: detail || null, lane: eventLane(type), ...extra });
   };
 
   push(project.created_at, "created", "Project registered", project.name);
@@ -613,10 +713,7 @@ export function buildDecisionTimeline(project, insights, reviewsAsc, auditRows, 
     }
   }
 
-  for (const a of auditRows || []) {
-    if (a.action === "create" && a.entity === "project") continue;
-    push(a.created_at, "audit", `${a.entity} ${a.action}`, a.detail || [a.prev_value, a.new_value].filter(Boolean).join(" → ") || null);
-  }
+  // Intentionally omit raw audit-log rows: the Decisions tab is a decision history, not a database dump.
 
   for (const iv of interventions || []) {
     push(iv.created_at, "intervention_created", "Intervention created", iv.action, {
@@ -637,7 +734,7 @@ export function buildDecisionTimeline(project, insights, reviewsAsc, auditRows, 
   }
 
   events.sort((a, b) => String(a.at).localeCompare(String(b.at)) || String(a.type).localeCompare(String(b.type)));
-  return events;
+  return dedupeTimeline(events);
 }
 
 export function classifyBoardGroup(row) {
@@ -690,14 +787,89 @@ export function buildDecisionBoard(rows) {
       }
     : null;
 
+  const deteriorated = rows.filter((r) => r.trend === "worse").length;
+  const improved = rows.filter((r) => r.trend === "better").length;
+  const insights = [];
+  if (grouped.immediate.length) {
+    insights.push(`${grouped.immediate.length} project${grouped.immediate.length === 1 ? "" : "s"} require immediate attention.`);
+  }
+  if (hasHistory && deteriorated) {
+    insights.push(`${deteriorated} project${deteriorated === 1 ? "" : "s"} deteriorated since the previous review.`);
+  }
+  if (hasHistory && improved) {
+    insights.push(`${improved} project${improved === 1 ? "" : "s"} improved since the previous review.`);
+  }
+  const bottleneckCounts = {};
+  for (const p of grouped.immediate.concat(grouped.at_risk)) {
+    if (p.bottleneck) bottleneckCounts[p.bottleneck] = (bottleneckCounts[p.bottleneck] || 0) + 1;
+  }
+  const topBottleneck = Object.entries(bottleneckCounts).sort((a, b) => b[1] - a[1])[0];
+  if (topBottleneck) insights.push(`Highest-risk bottleneck among attention projects: ${topBottleneck[0]}.`);
+  const urgent = grouped.immediate[0];
+  if (urgent?.recommended_action) insights.push(`Most urgent recommended action: ${urgent.recommended_action}`);
+
   return {
     generated_at: new Date().toISOString(),
     groups: grouped,
     counts: currentCounts,
+    summary: {
+      total: rows.length,
+      requires_attention: grouped.immediate.length + grouped.at_risk.length,
+      immediate: grouped.immediate.length,
+      improving: grouped.improving.length,
+      on_track: grouped.on_track.length,
+      deteriorated: hasHistory ? deteriorated : null,
+      improved: hasHistory ? improved : null,
+    },
+    insights,
     movement,
+    movement_available: Boolean(movement),
     disclaimer:
       "Prioritisation uses live five-factor health, the prototype forecast, and review-to-review change. This is not an ML ranking.",
   };
+}
+
+export function priorityReason(changed) {
+  const worse = (changed?.changes || []).filter((c) => c.direction === "worse" && c.field !== "health_score" && c.field !== "health_band");
+  const labels = [];
+  if (changed?.primary_driver?.label) labels.push(changed.primary_driver.label);
+  for (const c of worse) {
+    const lab = c.label || c.field;
+    if (!labels.includes(lab)) labels.push(lab);
+    if (labels.length >= 3) break;
+  }
+  if (!labels.length) return changed?.available ? "No material deterioration versus the last distinct review." : "No previous review stored.";
+  return labels.join(" + ");
+}
+
+export function boardRowsFromProjects(db, projects) {
+  return projects.map((p) => {
+    const insights = p.insights;
+    const changed = whatChangedForProject(db, p, insights);
+    const rec = changed.recommended_intervention;
+    const recent = changed.changes?.find((c) => c.direction === "worse") || changed.primary_driver;
+    return {
+      id: p.id,
+      name: p.name,
+      health_score: insights.health?.score,
+      health_band: insights.health?.band,
+      previous_band: changed.previous?.health_band || null,
+      trend: trendFromDelta(changed.health_delta),
+      forecast_slippage_days: insights.forecast?.estimated_slippage_days,
+      forecast_risk: insights.forecast?.schedule_risk || null,
+      bottleneck: insights.outlook?.bottleneck?.label || changed.primary_driver?.label || null,
+      recent_change: recent
+        ? `${recent.label || recent.field}: ${Array.isArray(recent.from) ? recent.from.join(", ") : recent.from} → ${Array.isArray(recent.to) ? recent.to.join(", ") : recent.to}`
+        : changed.available
+          ? "No material change since the last distinct review"
+          : "No previous review is available for comparison.",
+      recommended_action: rec?.action || insights.outlook?.recommended_action,
+      primary_driver: changed.primary_driver,
+      health_delta: changed.health_delta,
+      priority_reason: priorityReason(changed),
+      driver_kind: changed.driver_kind,
+    };
+  });
 }
 
 export function validateInterventionPayload(body, { partial = false } = {}) {

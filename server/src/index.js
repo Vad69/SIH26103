@@ -50,7 +50,7 @@ import {
   insertReview,
   buildDecisionTimeline,
   buildDecisionBoard,
-  trendFromDelta,
+  boardRowsFromProjects,
   validateInterventionPayload,
   interventionWriteFields,
 } from "./decision.js";
@@ -609,6 +609,7 @@ app.get("/api/dashboard", authRequired, (req, res) => {
     lifecycle_snapshot: lifeSnap,
     financial_anomalies: financialAnomalies,
     nlp_bottlenecks: nlpCounts(projects).slice(0, 8),
+    today: buildDecisionBoard(boardRowsFromProjects(db, projects)),
     risk_alerts: warnings.slice(0, 6).map((w) => ({
       project_id: w.project_id,
       project_name: w.project_name,
@@ -810,39 +811,19 @@ app.get("/api/projects/:id/decision-timeline", authRequired, (req, res) => {
     project,
     insights,
     reviewsAsc,
-    listAudit({ projectId: id, limit: 80 }),
+    [],
     project.interventions || []
   );
-  res.json({ events, disclaimer: "Timeline combines lifecycle dates, review-to-review change, interventions, and the activity log." });
+  res.json({
+    events,
+    disclaimer:
+      "Decision history from lifecycle dates, review-to-review change, and interventions. Raw activity-log rows remain on the Audit tab. Forecast entries are prototype estimates, not guaranteed dates.",
+  });
 });
 
 app.get("/api/decision-board", authRequired, (req, res) => {
   const projects = loadVisible(req.user);
-  const rows = projects.map((p) => {
-    const insights = p.insights;
-    const changed = whatChangedForProject(db, p, insights);
-    const rec = changed.recommended_intervention;
-    const recent = changed.changes?.find((c) => c.direction === "worse") || changed.primary_driver;
-    return {
-      id: p.id,
-      name: p.name,
-      health_score: insights.health?.score,
-      health_band: insights.health?.band,
-      previous_band: changed.previous?.health_band || null,
-      trend: trendFromDelta(changed.health_delta),
-      forecast_slippage_days: insights.forecast?.estimated_slippage_days,
-      bottleneck: insights.outlook?.bottleneck?.label || changed.primary_driver?.label || null,
-      recent_change: recent
-        ? `${recent.label || recent.field}: ${Array.isArray(recent.from) ? recent.from.join(", ") : recent.from} → ${Array.isArray(recent.to) ? recent.to.join(", ") : recent.to}`
-        : changed.available
-          ? "No material change since the last distinct review"
-          : "No previous review stored",
-      recommended_action: rec?.action || insights.outlook?.recommended_action,
-      primary_driver: changed.primary_driver,
-      health_delta: changed.health_delta,
-    };
-  });
-  res.json(buildDecisionBoard(rows));
+  res.json(buildDecisionBoard(boardRowsFromProjects(db, projects)));
 });
 
 app.put("/api/projects/:id", authRequired, requireRole("admin", "project_manager"), (req, res) => {
