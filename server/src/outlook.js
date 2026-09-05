@@ -1,29 +1,55 @@
 import { delayLabel } from "./constants.js";
 import { classifyFromIssue, classifyBottleneck } from "./nlp.js";
+import { blockedResources, currentStage, delayedLifecycleStages, lifecycleLabel } from "./lifecycle.js";
 
-export function buildOutlook({ insights, forecast, issues = [], interventions = [], preconstructions = [], project }) {
+export function buildOutlook({
+  insights,
+  forecast,
+  issues = [],
+  interventions = [],
+  preconstructions = [],
+  lifecycle_stages = [],
+  resources = [],
+  project,
+}) {
   const openIssues = issues.filter((i) => i.status !== "resolved");
-  const nlpSources = openIssues.length
-    ? openIssues.map((i) => classifyFromIssue(i))
-    : project?.delay_notes
-      ? [classifyBottleneck(project.delay_notes)]
-      : [];
+  const extraTexts = [
+    ...blockedResources(resources).map((r) => [r.delay_reason, r.remarks, r.category].filter(Boolean).join(" ")),
+    ...delayedLifecycleStages(lifecycle_stages).map((s) => [s.delay_reason, s.remarks].filter(Boolean).join(" ")),
+  ].filter((t) => t && t.trim());
+  const nlpSources = [
+    ...openIssues.map((i) => classifyFromIssue(i)),
+    ...extraTexts.map((t) => classifyBottleneck(t)),
+    ...(project?.delay_notes ? [classifyBottleneck(project.delay_notes)] : []),
+  ];
   const topNlp = nlpSources.sort((a, b) => b.confidence - a.confidence)[0] || null;
   const delayedClearances = preconstructions.filter((c) => c.status === "delayed" || c.status === "blocked");
   const openIv = interventions.filter((i) => i.status !== "resolved");
+  const stage = currentStage(lifecycle_stages);
   const why = [
     ...(insights.health?.reasons || []).slice(0, 4).map((r) => r.text),
     ...delayedClearances.slice(0, 2).map((c) => `Pre-construction: ${c.name} is ${c.status}.`),
     ...(forecast?.drivers || []).slice(0, 2),
   ].filter(Boolean);
   const uniqueWhy = [...new Set(why)].slice(0, 6);
+  const physical = insights.progress;
+  const financial = insights.finance?.financial_progress;
+  const mismatch =
+    financial != null && physical != null && Math.abs(financial - physical) >= 15
+      ? "Physical-Financial Mismatch"
+      : null;
 
   return {
+    current_stage: stage?.stage_key || "",
+    current_stage_label: stage ? lifecycleLabel(stage.stage_key) : "",
     current_health: insights.health?.band,
     current_score: insights.health?.score,
     forecast_schedule_risk: forecast?.schedule_risk,
     estimated_delay_days: forecast?.estimated_slippage_days,
     estimated_completion: forecast?.estimated_completion,
+    physical_progress: physical,
+    financial_progress: financial,
+    mismatch,
     why: uniqueWhy,
     bottleneck: topNlp
       ? {
@@ -32,7 +58,8 @@ export function buildOutlook({ insights, forecast, issues = [], interventions = 
           confidence: topNlp.confidence,
           confidence_band: topNlp.confidence_band,
           explanation: topNlp.explanation,
-          source: "AI-assisted classification on issue/delay text (synthetic-trained prototype). Manual category stays authoritative until accepted.",
+          source:
+            "AI-assisted classification on issue/delay/resource/lifecycle text (synthetic-trained prototype). Manual category stays authoritative until accepted.",
         }
       : project?.delay_reason
         ? {

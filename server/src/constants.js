@@ -74,3 +74,13 @@ export function delayLabel(id) {
 export function preconLabel(id) {
   return PRECON_CATEGORIES.find((r) => r.id === id)?.label || id || "Unspecified";
 }
+
+export {
+  LIFECYCLE_STAGES,
+  LIFECYCLE_STATUSES,
+  TENDER_STATUSES,
+  RESOURCE_CATEGORIES,
+  RESOURCE_STATUSES,
+  WBS_GROUPS,
+  SUPERVISION_TYPES,
+} from "./lifecycle.js";

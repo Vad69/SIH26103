@@ -24,7 +24,14 @@ export function StatusPill({ status }) {
     open: "bg-accent/15 text-accent",
     resolved: "bg-teal/15 text-teal",
     admin: "bg-ink/10 text-ink",
-    project_manager: "bg-navy/10 text-navy",
+    awarded: "bg-teal/15 text-teal",
+    published: "bg-navy/10 text-navy",
+    ready: "bg-teal/15 text-teal",
+    partial: "bg-navy/10 text-navy",
+    not_applicable: "bg-sand text-ink/70",
+    document_preparation: "bg-navy/10 text-navy",
+    under_evaluation: "bg-navy/10 text-navy",
+    cancelled: "bg-ink/10 text-ink",
   };
   const label = String(status || "").replaceAll("_", " ");
   return (

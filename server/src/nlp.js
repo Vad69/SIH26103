@@ -31,6 +31,7 @@ const SYNTHETIC = [
   ["legal", "legal approval and statutory NOC are still pending"],
   ["law_order", "local protests and law and order issues stopped the survey team"],
   ["law_order", "bandh and unrest in the district delayed field work"],
+  ["equipment", "material delivery from supplier is delayed"],
   ["equipment", "tablets and SIM cards have not reached enumerators"],
   ["equipment", "material supply of sensors is delayed from the vendor"],
   ["design", "DPR drawings are incomplete and the technical design is not frozen"],

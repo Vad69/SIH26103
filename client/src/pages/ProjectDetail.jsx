@@ -5,11 +5,27 @@ import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
 import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import Timeline from "../components/Timeline.jsx";
+import LifecycleStrip from "../components/LifecycleStrip.jsx";
 import { Card, Field, InsightBanner, ProgressBar, StatusPill, inputClass } from "../components/ui.jsx";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
-const tabs = ["Outlook", "Risk", "Finance", "Pre-construction", "Tasks", "Milestones", "Issues", "Interventions", "Team", "Timeline", "Audit"];
+const tabs = [
+  "Outlook",
+  "Lifecycle",
+  "Risk",
+  "Finance",
+  "Pre-construction",
+  "Tasks",
+  "Milestones",
+  "Issues",
+  "Interventions",
+  "Resources",
+  "Testing",
+  "Team",
+  "Timeline",
+  "Audit",
+];
 
 const emptyTask = {
   title: "",
@@ -18,6 +34,7 @@ const emptyTask = {
   priority: "medium",
   milestone_id: "",
   assignee_id: "",
+  wbs_group: "other",
 };
 
 export default function ProjectDetail() {
@@ -26,7 +43,7 @@ export default function ProjectDetail() {
   const { user } = useAuth();
   const [project, setProject] = useState(null);
   const [users, setUsers] = useState([]);
-  const [tab, setTab] = useState("Risk");
+  const [tab, setTab] = useState("Outlook");
   const [error, setError] = useState("");
   const [taskForm, setTaskForm] = useState(emptyTask);
   const [milestoneForm, setMilestoneForm] = useState({ title: "", due_date: "", status: "pending" });
@@ -107,6 +124,12 @@ export default function ProjectDetail() {
           <p className="text-xs tracking-[0.2em] text-ink/45 uppercase">Project</p>
           <h2 className="font-serif mt-1 text-3xl">{project.name}</h2>
           <p className="mt-2 max-w-2xl text-sm text-ink/65">{project.description}</p>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+            <span>Stage: <strong>{project.current_stage_label || project.insights?.outlook?.current_stage_label || "—"}</strong></span>
+            <StatusPill status={project.insights?.health?.band} />
+            <span>Forecast slippage: {project.insights?.forecast?.estimated_slippage_days ?? "—"} days</span>
+            <span className="text-ink/50">Data source: {(project.data_source || "manual").replace("_", " ")}</span>
+          </div>
         </div>
         <div className="flex flex-col items-end gap-2">
           <StatusPill status={project.computed_status} />
@@ -150,6 +173,17 @@ export default function ProjectDetail() {
             : project.insights?.headline
         }
       />
+
+      <Card>
+        <p className="text-xs uppercase text-ink/50">Project lifecycle</p>
+        <p className="mt-1 text-xs text-ink/50">Monitoring stages only — not an e-procurement or ERP workflow.</p>
+        <div className="mt-3">
+          <LifecycleStrip stages={project.lifecycle_stages || []} currentKey={project.current_stage} />
+        </div>
+        {project.commencement_delay_days > 0 ? (
+          <p className="mt-3 text-sm font-medium">{project.commencement_delay_days} days commencement delay</p>
+        ) : null}
+      </Card>
 
       <div className="grid gap-4 sm:grid-cols-4">
         <Card>
@@ -219,6 +253,13 @@ export default function ProjectDetail() {
                     ))}
                   </select>
                 </Field>
+                <Field label="WBS group">
+                  <select className={inputClass} value={taskForm.wbs_group} onChange={(e) => setTaskForm({ ...taskForm, wbs_group: e.target.value })}>
+                    {(meta.wbs_groups || [{ id: "other", label: "Other" }]).map((g) => (
+                      <option key={g.id} value={g.id}>{g.label}</option>
+                    ))}
+                  </select>
+                </Field>
                 <Field label="Milestone">
                   <select className={inputClass} value={taskForm.milestone_id} onChange={(e) => setTaskForm({ ...taskForm, milestone_id: e.target.value })}>
                     <option value="">None</option>
@@ -242,6 +283,7 @@ export default function ProjectDetail() {
               <thead className="bg-paper text-xs tracking-wide text-ink/50 uppercase">
                 <tr>
                   <th className="px-4 py-3">Task</th>
+                  <th className="px-4 py-3">WBS</th>
                   <th className="px-4 py-3">Assignee</th>
                   <th className="px-4 py-3">Due</th>
                   <th className="px-4 py-3">Priority</th>
@@ -258,6 +300,7 @@ export default function ProjectDetail() {
                         <p className="font-medium">{t.title}</p>
                         <p className="text-xs text-ink/50">{t.description}</p>
                       </td>
+                      <td className="px-4 py-3">{(t.wbs_group || "other").replaceAll("_", " ")}</td>
                       <td className="px-4 py-3">{t.assignee_name || "—"}</td>
                       <td className="px-4 py-3">{t.due_date}</td>
                       <td className="px-4 py-3"><StatusPill status={t.priority} /></td>
@@ -406,14 +449,20 @@ export default function ProjectDetail() {
         <div className="space-y-4">
           <Card>
             <p className="text-xs uppercase text-ink/50">Project outlook</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <StatusPill status={project.insights?.outlook?.current_health} />
-              <span className="text-sm">Forecast schedule risk: {project.insights?.forecast?.schedule_risk}</span>
-              <span className="text-sm">Estimated delay: {project.insights?.forecast?.estimated_slippage_days} days</span>
+            <p className="mt-1 text-xs text-ink/50">Single executive summary from canonical project data. Health is rule-based; forecast is a prototype trajectory.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+              <div><p className="text-ink/50">Current stage</p><p className="font-medium">{project.insights?.outlook?.current_stage_label || project.current_stage_label || "—"}</p></div>
+              <div><p className="text-ink/50">Health</p><StatusPill status={project.insights?.outlook?.current_health} /></div>
+              <div><p className="text-ink/50">Forecast</p><p className="font-medium">{project.insights?.forecast?.estimated_slippage_days} days potential schedule slippage</p></div>
+              <div><p className="text-ink/50">Physical progress</p><p className="font-medium">{project.insights?.outlook?.physical_progress ?? project.progress}%</p></div>
+              <div><p className="text-ink/50">Financial expenditure</p><p className="font-medium">{project.insights?.outlook?.financial_progress ?? project.insights?.finance?.financial_progress}%</p></div>
+              {project.insights?.outlook?.mismatch ? (
+                <div className="sm:col-span-2"><p className="font-medium text-accent">{project.insights.outlook.mismatch}</p></div>
+              ) : null}
             </div>
-            <p className="mt-3 text-sm">Estimated completion: {project.insights?.forecast?.estimated_completion}</p>
+            <p className="mt-3 text-sm">Estimated completion: {project.insights?.forecast?.estimated_completion} · forecast risk {project.insights?.forecast?.schedule_risk}</p>
             <p className="mt-1 text-xs text-ink/50">{project.insights?.forecast?.method_note}</p>
-            <h3 className="mt-4 font-medium">Why?</h3>
+            <h3 className="mt-4 font-medium">Why at risk</h3>
             <ul className="mt-2 list-disc pl-5 text-sm">
               {(project.insights?.outlook?.why || []).map((w) => <li key={w}>{w}</li>)}
             </ul>
@@ -428,7 +477,7 @@ export default function ProjectDetail() {
             {project.insights?.outlook?.open_intervention ? (
               <p className="mt-3 text-sm">Open intervention: {project.insights.outlook.open_intervention.action}</p>
             ) : null}
-            <p className="mt-3 text-sm font-medium">{project.insights?.outlook?.recommended_action}</p>
+            <p className="mt-3 text-sm font-medium">Recommended action: {project.insights?.outlook?.recommended_action}</p>
             <p className="mt-2 text-xs text-ink/45">{project.insights?.outlook?.disclaimer}</p>
           </Card>
           {canManage ? (
@@ -547,7 +596,12 @@ export default function ProjectDetail() {
             <Card><p className="text-xs text-ink/50 uppercase">Time overrun</p><p className="font-serif mt-1 text-2xl">{project.insights.finance.time_overrun_days} days</p></Card>
           </div>
           <Card>
-            <p className="text-sm">Release utilization {project.insights.finance.release_utilization ?? 0}% · Expenditure utilization {project.insights.finance.expenditure_utilization ?? 0}% · Funding gap ₹{project.insights.finance.funding_gap ?? 0} Cr · Physical vs financial mismatch {project.insights.finance.physical_financial_mismatch ?? 0} pts</p>
+          <p className="mt-2 text-sm">Release utilization {project.insights.finance.release_utilization ?? 0}% · Expenditure utilization {project.insights.finance.expenditure_utilization ?? 0}% · Funding gap ₹{project.insights.finance.funding_gap ?? 0} Cr</p>
+            {Math.abs(project.insights.finance.physical_financial_mismatch || 0) >= 15 ? (
+              <p className="mt-2 text-sm font-medium text-accent">Physical-Financial Mismatch ({project.insights.finance.physical_financial_mismatch} pts: financial {project.insights.finance.financial_progress}% vs system-calculated physical {project.progress}%)</p>
+            ) : (
+              <p className="mt-2 text-sm">Physical vs financial gap {project.insights.finance.physical_financial_mismatch ?? 0} pts</p>
+            )}
             <p className="mt-2 text-sm">Expected expenditure ₹{project.insights.finance.expected_expenditure} Cr · Actual ₹{project.insights.finance.expenditure} Cr · Variance ₹{project.insights.finance.expenditure_variance} Cr</p>
             <p className="mt-2 text-sm text-ink/60">Original completion {project.insights.finance.original_end} · Revised {project.insights.finance.revised_end}</p>
           </Card>
@@ -654,6 +708,264 @@ export default function ProjectDetail() {
               )}
             </Card>
           ))}
+        </div>
+      ) : null}
+
+      {tab === "Lifecycle" ? (
+        <div className="space-y-4">
+          <p className="text-sm text-ink/60">Tender, award and work-order fields are monitoring metadata. They do not run procurement.</p>
+          {(project.lifecycle_stages || []).map((s) => (
+            <Card key={s.stage_key} className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="font-medium">{s.stage_key.replaceAll("_", " ")}</p>
+                <p className="text-sm text-ink/60">Planned {s.planned_date || "—"} · actual {s.actual_date || "—"}</p>
+                <p className="text-sm">{s.remarks}</p>
+                {s.delay_reason ? <p className="text-sm text-accent">{s.delay_reason}</p> : null}
+              </div>
+              {canManage ? (
+                <select
+                  className="rounded border border-sand px-2 py-1 text-sm"
+                  value={s.status}
+                  onChange={(e) =>
+                    api(`/api/projects/${id}/lifecycle/${s.stage_key}`, {
+                      method: "PUT",
+                      body: JSON.stringify({ ...s, status: e.target.value }),
+                    }).then(load).catch((err) => setError(err.message))
+                  }
+                >
+                  {(meta.lifecycle_statuses || []).map((st) => <option key={st.id} value={st.id}>{st.label}</option>)}
+                </select>
+              ) : (
+                <StatusPill status={s.status} />
+              )}
+            </Card>
+          ))}
+          {canManage ? (
+            <Card>
+              <h3 className="font-medium">Tender / award / work order / commencement / supervision</h3>
+              <form
+                className="mt-3 grid gap-3 md:grid-cols-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const fd = new FormData(e.target);
+                  api(`/api/projects/${id}`, {
+                    method: "PUT",
+                    body: JSON.stringify({
+                      ...project,
+                      tender_status: fd.get("tender_status"),
+                      tender_document_date: fd.get("tender_document_date"),
+                      tender_publication_date: fd.get("tender_publication_date"),
+                      bid_deadline: fd.get("bid_deadline"),
+                      evaluation_date: fd.get("evaluation_date"),
+                      tender_award_date: fd.get("tender_award_date"),
+                      contracting_agency: fd.get("contracting_agency"),
+                      tender_contract_value: fd.get("tender_contract_value"),
+                      tender_remarks: fd.get("tender_remarks"),
+                      tender_delay_reason: fd.get("tender_delay_reason"),
+                      award_date: fd.get("award_date"),
+                      awarded_agency: fd.get("awarded_agency"),
+                      award_contract_value: fd.get("award_contract_value"),
+                      award_planned_commencement: fd.get("award_planned_commencement"),
+                      award_remarks: fd.get("award_remarks"),
+                      work_order_issued: fd.get("work_order_issued") === "on" ? 1 : 0,
+                      work_order_number: fd.get("work_order_number"),
+                      work_order_date: fd.get("work_order_date"),
+                      contract_reference: fd.get("contract_reference"),
+                      executing_agency: fd.get("executing_agency"),
+                      planned_commencement_date: fd.get("planned_commencement_date"),
+                      actual_commencement_date: fd.get("actual_commencement_date"),
+                      commencement_status: fd.get("commencement_status"),
+                      commencement_delay_reason: fd.get("commencement_delay_reason"),
+                      commencement_remarks: fd.get("commencement_remarks"),
+                      supervision_type: fd.get("supervision_type"),
+                      supervising_org: fd.get("supervising_org"),
+                      supervising_person: fd.get("supervising_person"),
+                      supervision_remarks: fd.get("supervision_remarks"),
+                    }),
+                  }).then(load).catch((err) => setError(err.message));
+                }}
+              >
+                <Field label="Tender status">
+                  <select name="tender_status" defaultValue={project.tender_status || "not_started"} className={inputClass}>
+                    {(meta.tender_statuses || []).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Tender publication"><input name="tender_publication_date" type="date" defaultValue={project.tender_publication_date || ""} className={inputClass} /></Field>
+                <Field label="Bid deadline"><input name="bid_deadline" type="date" defaultValue={project.bid_deadline || ""} className={inputClass} /></Field>
+                <Field label="Award date"><input name="award_date" type="date" defaultValue={project.award_date || project.tender_award_date || ""} className={inputClass} /></Field>
+                <Field label="Awarded agency"><input name="awarded_agency" defaultValue={project.awarded_agency || ""} className={inputClass} /></Field>
+                <Field label="Contract value (₹ Cr)"><input name="award_contract_value" type="number" step="0.01" defaultValue={project.award_contract_value || project.tender_contract_value || 0} className={inputClass} /></Field>
+                <Field label="Work order number"><input name="work_order_number" defaultValue={project.work_order_number || ""} className={inputClass} /></Field>
+                <Field label="Work order date"><input name="work_order_date" type="date" defaultValue={project.work_order_date || ""} className={inputClass} /></Field>
+                <label className="flex items-center gap-2 text-sm md:col-span-2">
+                  <input name="work_order_issued" type="checkbox" defaultChecked={Boolean(project.work_order_issued)} /> Work order issued
+                </label>
+                <Field label="Planned commencement"><input name="planned_commencement_date" type="date" defaultValue={project.planned_commencement_date || ""} className={inputClass} /></Field>
+                <Field label="Actual commencement"><input name="actual_commencement_date" type="date" defaultValue={project.actual_commencement_date || ""} className={inputClass} /></Field>
+                <Field label="Commencement status">
+                  <select name="commencement_status" defaultValue={project.commencement_status || "not_started"} className={inputClass}>
+                    {(meta.lifecycle_statuses || []).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Commencement delay reason"><input name="commencement_delay_reason" defaultValue={project.commencement_delay_reason || ""} className={inputClass} /></Field>
+                <Field label="Supervision type">
+                  <select name="supervision_type" defaultValue={project.supervision_type || ""} className={inputClass}>
+                    <option value="">Not recorded</option>
+                    {(meta.supervision_types || []).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Supervising organisation"><input name="supervising_org" defaultValue={project.supervising_org || ""} className={inputClass} /></Field>
+                <Field label="Responsible person"><input name="supervising_person" defaultValue={project.supervising_person || ""} className={inputClass} /></Field>
+                <input type="hidden" name="tender_document_date" defaultValue={project.tender_document_date || ""} />
+                <input type="hidden" name="evaluation_date" defaultValue={project.evaluation_date || ""} />
+                <input type="hidden" name="tender_award_date" defaultValue={project.tender_award_date || ""} />
+                <input type="hidden" name="contracting_agency" defaultValue={project.contracting_agency || ""} />
+                <input type="hidden" name="tender_contract_value" defaultValue={project.tender_contract_value || 0} />
+                <input type="hidden" name="tender_remarks" defaultValue={project.tender_remarks || ""} />
+                <input type="hidden" name="tender_delay_reason" defaultValue={project.tender_delay_reason || ""} />
+                <input type="hidden" name="award_planned_commencement" defaultValue={project.award_planned_commencement || ""} />
+                <input type="hidden" name="award_remarks" defaultValue={project.award_remarks || ""} />
+                <input type="hidden" name="contract_reference" defaultValue={project.contract_reference || ""} />
+                <input type="hidden" name="executing_agency" defaultValue={project.executing_agency || ""} />
+                <input type="hidden" name="commencement_remarks" defaultValue={project.commencement_remarks || ""} />
+                <input type="hidden" name="supervision_remarks" defaultValue={project.supervision_remarks || ""} />
+                {project.commencement_delay_days > 0 ? <p className="md:col-span-2 text-sm font-medium">{project.commencement_delay_days} days commencement delay</p> : null}
+                <button className="rounded-md bg-navy px-4 py-2 text-sm text-white" type="submit">Save lifecycle metadata</button>
+              </form>
+            </Card>
+          ) : (
+            <Card>
+              <p className="text-sm">Tender: {project.tender_status || "—"} · Awarded agency: {project.awarded_agency || "—"} · Work order: {project.work_order_number || "not issued"}</p>
+              <p className="mt-2 text-sm">Supervision: {(project.supervision_type || "").replaceAll("_", " ") || "—"} · {project.supervising_org || ""}</p>
+            </Card>
+          )}
+        </div>
+      ) : null}
+
+      {tab === "Resources" ? (
+        <div className="space-y-4">
+          <p className="text-sm text-ink/60">Resource readiness for execution — not an ERP inventory system.</p>
+          {(project.resources || []).map((r) => (
+            <Card key={r.category} className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="font-medium">{r.category.replaceAll("_", " ")}</p>
+                <p className="text-sm text-ink/60">{r.responsible || "—"} · expected {r.expected_date || "—"}</p>
+                <p className="text-sm">{r.remarks}</p>
+                {r.delay_reason ? <p className="text-sm text-accent">{r.delay_reason}</p> : null}
+              </div>
+              {canManage ? (
+                <select
+                  className="rounded border border-sand px-2 py-1 text-sm"
+                  value={r.status}
+                  onChange={(e) =>
+                    api(`/api/projects/${id}/resources/${r.category}`, {
+                      method: "PUT",
+                      body: JSON.stringify({ ...r, status: e.target.value }),
+                    }).then(load).catch((err) => setError(err.message))
+                  }
+                >
+                  {(meta.resource_statuses || []).map((st) => <option key={st.id} value={st.id}>{st.label}</option>)}
+                </select>
+              ) : (
+                <StatusPill status={r.status} />
+              )}
+            </Card>
+          ))}
+        </div>
+      ) : null}
+
+      {tab === "Testing" ? (
+        <div className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Card>
+              <p className="text-xs uppercase text-ink/50">Testing</p>
+              <StatusPill status={project.testing_status} />
+              <p className="mt-2 text-sm">Planned {project.testing_planned || "—"} · actual {project.testing_actual || "—"}</p>
+              <p className="text-sm">{project.testing_remarks}</p>
+              {project.testing_issues ? <p className="text-sm text-accent">{project.testing_issues}</p> : null}
+            </Card>
+            <Card>
+              <p className="text-xs uppercase text-ink/50">Commissioning</p>
+              <StatusPill status={project.commissioning_status} />
+              <p className="mt-2 text-sm">Planned {project.commissioning_planned || "—"} · actual {project.commissioning_actual || "—"}</p>
+              <p className="text-sm">{project.commissioning_remarks}</p>
+              {project.commissioning_outstanding ? <p className="text-sm text-accent">{project.commissioning_outstanding}</p> : null}
+            </Card>
+            <Card>
+              <p className="text-xs uppercase text-ink/50">Handover</p>
+              <StatusPill status={project.handover_status} />
+              <p className="mt-2 text-sm">Receiving agency: {project.receiving_agency || "—"}</p>
+              <p className="text-sm">Planned {project.handover_planned || "—"} · actual {project.handover_actual || "—"}</p>
+              <p className="text-sm">{project.handover_remarks}</p>
+              {project.completion_certificate_status ? <p className="text-sm">Certificate: {project.completion_certificate_status}</p> : null}
+            </Card>
+          </div>
+          {canManage ? (
+            <Card>
+              <h3 className="font-medium">Update testing / commissioning / handover</h3>
+              <form
+                className="mt-3 grid gap-3 md:grid-cols-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const fd = new FormData(e.target);
+                  api(`/api/projects/${id}`, {
+                    method: "PUT",
+                    body: JSON.stringify({
+                      ...project,
+                      testing_status: fd.get("testing_status"),
+                      testing_planned: fd.get("testing_planned"),
+                      testing_actual: fd.get("testing_actual"),
+                      testing_remarks: fd.get("testing_remarks"),
+                      testing_issues: fd.get("testing_issues"),
+                      commissioning_status: fd.get("commissioning_status"),
+                      commissioning_planned: fd.get("commissioning_planned"),
+                      commissioning_actual: fd.get("commissioning_actual"),
+                      commissioning_remarks: fd.get("commissioning_remarks"),
+                      commissioning_outstanding: fd.get("commissioning_outstanding"),
+                      handover_status: fd.get("handover_status"),
+                      handover_planned: fd.get("handover_planned"),
+                      handover_actual: fd.get("handover_actual"),
+                      receiving_agency: fd.get("receiving_agency"),
+                      handover_remarks: fd.get("handover_remarks"),
+                      handover_defects: fd.get("handover_defects"),
+                      completion_certificate_status: fd.get("completion_certificate_status"),
+                    }),
+                  }).then(load).catch((err) => setError(err.message));
+                }}
+              >
+                <Field label="Testing status">
+                  <select name="testing_status" defaultValue={project.testing_status || "not_started"} className={inputClass}>
+                    {(meta.lifecycle_statuses || []).filter((s) => s.id !== "not_applicable").map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Planned testing"><input name="testing_planned" type="date" defaultValue={project.testing_planned || ""} className={inputClass} /></Field>
+                <Field label="Actual testing"><input name="testing_actual" type="date" defaultValue={project.testing_actual || ""} className={inputClass} /></Field>
+                <Field label="Testing remarks"><input name="testing_remarks" defaultValue={project.testing_remarks || ""} className={inputClass} /></Field>
+                <Field label="Issues found"><input name="testing_issues" defaultValue={project.testing_issues || ""} className={inputClass} /></Field>
+                <Field label="Commissioning status">
+                  <select name="commissioning_status" defaultValue={project.commissioning_status || "not_started"} className={inputClass}>
+                    {(meta.lifecycle_statuses || []).filter((s) => s.id !== "not_applicable").map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Planned commissioning"><input name="commissioning_planned" type="date" defaultValue={project.commissioning_planned || ""} className={inputClass} /></Field>
+                <Field label="Actual commissioning"><input name="commissioning_actual" type="date" defaultValue={project.commissioning_actual || ""} className={inputClass} /></Field>
+                <Field label="Outstanding issues"><input name="commissioning_outstanding" defaultValue={project.commissioning_outstanding || ""} className={inputClass} /></Field>
+                <Field label="Handover status">
+                  <select name="handover_status" defaultValue={project.handover_status || "not_started"} className={inputClass}>
+                    {(meta.lifecycle_statuses || []).filter((s) => s.id !== "not_applicable").map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Receiving agency"><input name="receiving_agency" defaultValue={project.receiving_agency || ""} className={inputClass} /></Field>
+                <Field label="Planned handover"><input name="handover_planned" type="date" defaultValue={project.handover_planned || ""} className={inputClass} /></Field>
+                <Field label="Actual handover"><input name="handover_actual" type="date" defaultValue={project.handover_actual || ""} className={inputClass} /></Field>
+                <Field label="Handover remarks"><input name="handover_remarks" defaultValue={project.handover_remarks || ""} className={inputClass} /></Field>
+                <Field label="Outstanding defects"><input name="handover_defects" defaultValue={project.handover_defects || ""} className={inputClass} /></Field>
+                <Field label="Completion certificate"><input name="completion_certificate_status" defaultValue={project.completion_certificate_status || ""} className={inputClass} /></Field>
+                <input type="hidden" name="commissioning_remarks" defaultValue={project.commissioning_remarks || ""} />
+                <button className="rounded-md bg-navy px-4 py-2 text-sm text-white" type="submit">Save close-out stages</button>
+              </form>
+            </Card>
+          ) : null}
         </div>
       ) : null}
 

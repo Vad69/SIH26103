@@ -144,6 +144,42 @@ export default function Dashboard() {
         ))}
       </div>
 
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Card>
+          <p className="text-xs text-ink/50 uppercase">Newly at risk</p>
+          <p className="font-serif mt-1 text-3xl">{(data.newly_risk || []).length}</p>
+          <p className="mt-2 text-xs text-ink/50">{(data.newly_risk || []).join(", ") || "None in this snapshot"}</p>
+        </Card>
+        <Card>
+          <p className="text-xs text-ink/50 uppercase">Improving</p>
+          <p className="font-serif mt-1 text-3xl">{(data.improving || []).length}</p>
+        </Card>
+        <Card>
+          <p className="text-xs text-ink/50 uppercase">Deteriorating</p>
+          <p className="font-serif mt-1 text-3xl">{(data.deteriorating || []).length}</p>
+        </Card>
+      </div>
+
+      <Card>
+        <h3 className="font-medium">Project lifecycle snapshot</h3>
+        <p className="mt-1 text-xs text-ink/50">Current stage counts across the visible portfolio.</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-4 lg:grid-cols-8 text-sm">
+          {["tender", "award", "commencement", "execution", "testing", "commissioning", "completion", "handover"].map((key) => (
+            <div key={key} className="rounded-lg bg-paper p-3">
+              <p className="text-xs text-ink/50">{key.replaceAll("_", " ")}</p>
+              <p className="font-serif text-2xl">{data.lifecycle_snapshot?.by_stage?.[key] ?? 0}</p>
+            </div>
+          ))}
+        </div>
+        {(data.lifecycle_snapshot?.stuck || []).length ? (
+          <ul className="mt-3 text-sm">
+            {data.lifecycle_snapshot.stuck.slice(0, 6).map((s) => (
+              <li key={s.id}><Link className="hover:underline" to={`/projects/${s.id}`}>{s.name}</Link> stuck at {s.stage.replaceAll("_", " ")} ({s.status})</li>
+            ))}
+          </ul>
+        ) : <p className="mt-3 text-sm text-ink/50">No delayed or blocked lifecycle stages in this filter.</p>}
+      </Card>
+
       {data.early_warnings?.[0] ? (
         <InsightBanner
           insight={{
@@ -251,7 +287,7 @@ export default function Dashboard() {
                 <StatusPill status={p.health?.band} />
               </div>
               <p className="mb-2 text-xs text-ink/50">
-                Planned (elapsed original timeline) {p.planned_progress}% · System-calculated (task average) {p.calculated_progress ?? p.progress}%
+                Stage {p.current_stage_label || "—"} · Planned (elapsed original timeline) {p.planned_progress}% · System-calculated (task average) {p.calculated_progress ?? p.progress}%
                 {p.reported_physical_progress != null ? ` · Reported ${p.reported_physical_progress}%` : ""} · variance {p.progress - p.planned_progress}%
               </p>
               <ProgressBar value={p.progress} />

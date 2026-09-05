@@ -69,6 +69,7 @@ export default function ExecutiveReports({ kind }) {
               <tr>
                 <th className="py-2">Project</th>
                 <th>Health</th>
+                <th>Stage</th>
                 <th>Forecast</th>
                 <th>Progress</th>
                 <th>Sanctioned</th>
@@ -81,6 +82,7 @@ export default function ExecutiveReports({ kind }) {
                 <tr key={p.id} className="border-t border-sand">
                   <td className="py-2">{p.name}</td>
                   <td><StatusPill status={p.health} /></td>
+                  <td>{p.lifecycle_stage || "—"}</td>
                   <td>{p.forecast_risk}</td>
                   <td>{p.physical_progress ?? p.calculated_progress}%</td>
                   <td>₹{p.sanctioned ?? p.original_cost} Cr</td>
