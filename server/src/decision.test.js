@@ -13,6 +13,10 @@ import {
   validateInterventionPayload,
   interventionWriteFields,
   fingerprint,
+  whyItMatters,
+  driverKind,
+  priorityReason,
+  eventLane,
 } from "./decision.js";
 import { analyzeProject } from "./insights.js";
 import { forecastProject } from "./forecast.js";
@@ -131,6 +135,9 @@ test("what-changed: valid previous snapshot with health deterioration", () => {
   assert.ok(result.changes.some((c) => c.field === "overdue_milestones"));
   assert.ok(result.changes.some((c) => c.field === "resources" && c.to === "blocked"));
   assert.equal(result.primary_driver.field, "resources");
+  assert.equal(result.changes.find((c) => c.field === "resources").evidence, "observed");
+  assert.equal(result.changes.find((c) => c.field === "forecast_slippage_days").evidence, "forecast");
+  assert.equal(driverKind(result.changes, result.primary_driver), "likely_driver");
 });
 
 test("what-changed: health improvement and progress change", () => {
@@ -218,10 +225,14 @@ test("executive board prioritises critical projects and handles no history", () 
   assert.ok(board.groups.improving.some((p) => p.name === "B"));
   assert.ok(board.groups.on_track.some((p) => p.name === "C"));
   assert.ok(board.movement);
+  assert.equal(board.movement_available, true);
+  assert.equal(board.summary.immediate, 1);
+  assert.ok(board.insights.some((t) => /immediate attention/i.test(t)));
   assert.equal(board.movement.critical.from, 0);
   assert.equal(board.movement.critical.to, 1);
   const fresh = buildDecisionBoard([{ id: 9, name: "New", health_score: 80, health_band: "on_track", trend: "new" }]);
   assert.equal(fresh.movement, null);
+  assert.equal(fresh.movement_available, false);
 });
 
 test("timeline is chronological and includes intervention, health, forecast, recovery", () => {
@@ -297,4 +308,41 @@ test("five-factor weights remain unchanged when simulating", () => {
   });
   assert.equal(analyzed.health.factor_rows.length, 5);
   assert.match(analyzed.health.band_explanation, /schedule \(25%\)/);
+});
+
+test("what-if includes assumptions and does not claim guaranteed prediction", () => {
+  const { project, insights } = sampleBundle();
+  const result = simulateScenario(project, insights, { resource_category: "materials", resolve_in_days: 7 });
+  assert.equal(result.scenario_only, true);
+  assert.ok(result.assumptions.some((a) => /live project is not modified/i.test(a)));
+  assert.match(result.disclaimer, /not a guaranteed/i);
+});
+
+test("timeline omits raw audit rows and tags lanes", () => {
+  const events = buildDecisionTimeline(
+    { name: "X", created_at: "2026-01-01" },
+    {},
+    [],
+    [{ created_at: "2026-02-01", entity: "task", action: "updated", detail: "noise" }],
+    [{ id: 1, created_at: "2026-02-02", action: "Act", status: "open", trigger_summary: "Ready" }]
+  );
+  assert.equal(events.some((e) => e.type === "audit"), false);
+  const created = events.find((e) => e.type === "intervention_created");
+  assert.equal(created.lane, "response");
+  assert.equal(eventLane("health_down"), "consequence");
+  assert.equal(eventLane("intervention_completed"), "outcome");
+});
+
+test("timeline dedupes identical events", () => {
+  const iv = { id: 9, created_at: "2026-03-01", action: "Same", status: "open" };
+  const events = buildDecisionTimeline({ name: "X", created_at: "2026-01-01" }, {}, [], [], [iv, iv]);
+  assert.equal(events.filter((e) => e.type === "intervention_created").length, 1);
+});
+
+test("why-it-matters and empty comparison copy", () => {
+  const empty = whatChangedFromReviews([], { health_score: 80 });
+  assert.equal(empty.available, false);
+  assert.match(whyItMatters(null), /No review-to-review/i);
+  const reason = priorityReason({ available: false, changes: [] });
+  assert.match(reason, /No previous review/i);
 });

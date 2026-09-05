@@ -329,4 +329,24 @@ test("write endpoints enforce Admin / PM / Member rules", async (t) => {
   assert.equal(board.status, 200);
   assert.ok(board.data.groups.immediate);
   assert.ok(board.data.groups.at_risk);
+  assert.ok(board.data.summary);
+  assert.equal(typeof board.data.movement_available, "boolean");
+  assert.equal(timeline.data.events.some((e) => e.type === "audit"), false);
+
+  const noAuth = await req("/api/decision-board");
+  assert.equal(noAuth.status, 401);
+
+  const memberReview = await req(`/api/projects/${ownId}/reviews`, { method: "POST", token: member, body: {} });
+  assert.equal(memberReview.status, 403);
+
+  const dashToday = await req("/api/dashboard", { token: admin });
+  assert.ok(dashToday.data.today?.summary);
+
+  const missingIv = await req("/api/interventions/999999", { method: "PUT", token: pm, body: { status: "open" } });
+  assert.equal(missingIv.status, 404);
+
+  const reviewsBefore = await req(`/api/projects/${ownId}/what-changed`, { token: pm });
+  await req(`/api/projects/${ownId}/what-changed`, { token: pm });
+  const reviewsAfter = await req(`/api/projects/${ownId}/what-changed`, { token: pm });
+  assert.equal(reviewsAfter.data.previous_review_id, reviewsBefore.data.previous_review_id);
 });

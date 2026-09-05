@@ -6,7 +6,8 @@ import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import Timeline from "../components/Timeline.jsx";
 import LifecycleStrip from "../components/LifecycleStrip.jsx";
-import { WhatChangedPanel, WhatIfPanel, DecisionTimelinePanel, CreateInterventionFromRecommendation } from "../components/DecisionPanels.jsx";
+import { Card, Field, InsightBanner, ProgressBar, StatusPill, inputClass } from "../components/ui.jsx";
+import { WhatChangedPanel, WhatIfPanel, DecisionTimelinePanel, CreateInterventionFromRecommendation, HealthExplainPanel } from "../components/DecisionPanels.jsx";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
@@ -70,16 +71,22 @@ export default function ProjectDetail() {
   const [timeline, setTimeline] = useState([]);
   const [timelineError, setTimelineError] = useState("");
   const [timelineLoading, setTimelineLoading] = useState(true);
+  const [timelineDisclaimer, setTimelineDisclaimer] = useState("");
 
   function loadDecision() {
     setWhatChangedLoading(true);
     setTimelineLoading(true);
+    setWhatChangedError("");
+    setTimelineError("");
     api(`/api/projects/${id}/what-changed`)
       .then(setWhatChanged)
       .catch((e) => setWhatChangedError(e.message))
       .finally(() => setWhatChangedLoading(false));
     api(`/api/projects/${id}/decision-timeline`)
-      .then((d) => setTimeline(d.events || []))
+      .then((d) => {
+        setTimeline(d.events || []);
+        setTimelineDisclaimer(d.disclaimer || "");
+      })
       .catch((e) => setTimelineError(e.message))
       .finally(() => setTimelineLoading(false));
   }
@@ -106,7 +113,14 @@ export default function ProjectDetail() {
     return user.role === "admin" || (user.role === "project_manager" && project.manager_id === user.id);
   }, [project, user]);
 
-  if (error) return <p className="text-accent">{error}</p>;
+  if (error) {
+    return (
+      <div>
+        <p className="text-accent">{error}</p>
+        <button type="button" className="mt-2 text-sm text-navy underline" onClick={() => { setError(""); load(); }}>Try again</button>
+      </div>
+    );
+  }
   if (!project) return <p>Loading project…</p>;
 
   async function addTask(e) {
@@ -248,7 +262,9 @@ export default function ProjectDetail() {
         {tabs.map((t) => (
           <button
             key={t}
+            type="button"
             onClick={() => setTab(t)}
+            aria-pressed={tab === t}
             className={`rounded-full px-4 py-1.5 text-sm ${tab === t ? "bg-navy text-white" : "bg-white border border-sand"}`}
           >
             {t}
@@ -467,7 +483,13 @@ export default function ProjectDetail() {
       ) : null}
 
       {tab === "Decisions" ? (
-        <DecisionTimelinePanel events={timeline} loading={timelineLoading} error={timelineError} />
+        <DecisionTimelinePanel
+          events={timeline}
+          loading={timelineLoading}
+          error={timelineError}
+          onRetry={loadDecision}
+          disclaimer={timelineDisclaimer}
+        />
       ) : null}
 
       {tab === "Timeline" ? (
@@ -515,7 +537,8 @@ export default function ProjectDetail() {
             <p className="mt-3 text-sm font-medium">Recommended action: {project.insights?.outlook?.recommended_action}</p>
             <p className="mt-2 text-xs text-ink/45">{project.insights?.outlook?.disclaimer}</p>
           </Card>
-          <WhatChangedPanel data={whatChanged} loading={whatChangedLoading} error={whatChangedError} />
+          <HealthExplainPanel health={project.insights?.health} forecast={project.insights?.forecast} />
+          <WhatChangedPanel data={whatChanged} loading={whatChangedLoading} error={whatChangedError} onRetry={loadDecision} />
           <WhatIfPanel projectId={id} canRun={!whatChangedLoading} onError={setError} />
           <CreateInterventionFromRecommendation
             projectId={id}
@@ -1130,39 +1153,61 @@ export default function ProjectDetail() {
               </form>
             </Card>
           ) : null}
+          {!(project.interventions || []).length ? (
+            <Card><p className="text-sm text-ink/50">No active interventions.</p></Card>
+          ) : null}
           {(project.interventions || []).map((iv) => (
             <Card key={iv.id} className="space-y-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="font-medium">{iv.action}</p>
-                  <p className="text-sm text-ink/60">{iv.authority} · {iv.assigned_officer || "unassigned"} · {iv.due_date || "no date"}</p>
-                  {iv.trigger_summary ? <p className="mt-1 text-sm text-ink/65">Why: {iv.trigger_summary}</p> : null}
-                  {iv.recommended_action ? <p className="text-sm text-ink/65">Recommended: {iv.recommended_action}</p> : null}
-                  {iv.outcome ? <p className="text-sm">Outcome: {iv.outcome}</p> : null}
+                <div className="space-y-1 text-sm">
+                  <p className="font-medium text-base">{iv.actual_action || iv.action}</p>
+                  <p><span className="text-ink/50">Trigger: </span>{iv.trigger_summary || "Not recorded"}</p>
+                  <p><span className="text-ink/50">Recommended action: </span>{iv.recommended_action || "—"}</p>
+                  <p><span className="text-ink/50">Officer action: </span>{iv.actual_action || iv.action}</p>
+                  <p><span className="text-ink/50">Owner: </span>{iv.assigned_officer || "unassigned"}{iv.authority ? ` · ${iv.authority}` : ""}</p>
+                  <p><span className="text-ink/50">Due date: </span>{iv.due_date || "not set"}</p>
+                  <p><span className="text-ink/50">Status: </span>{iv.status === "resolved" ? "Completed" : iv.status.replaceAll("_", " ")}</p>
+                  <p><span className="text-ink/50">Outcome: </span>{iv.outcome || "Not recorded"}</p>
                 </div>
-                <StatusPill status={iv.status} />
+                <StatusPill status={iv.status === "resolved" ? "resolved" : iv.status} />
               </div>
+              {iv.status === "resolved" || iv.status === "cancelled" ? (
+                <p className="text-xs text-ink/55">
+                  Detected → actioned → {iv.status === "resolved" ? "completed" : "cancelled"} → outcome recorded.
+                  Current project state (not a proven causal effect): health {project.insights?.health?.score} {project.insights?.health?.band}, forecast slippage {project.insights?.forecast?.estimated_slippage_days} days.
+                </p>
+              ) : (
+                <p className="text-xs text-ink/50">Detected → actioned. Complete the intervention and record an outcome when work finishes.</p>
+              )}
               {canManage ? (
                 <div className="flex flex-wrap items-end gap-2">
-                  <select
-                    className="rounded border border-sand px-2 py-1 text-sm"
-                    value={iv.status}
-                    onChange={(e) => api(`/api/interventions/${iv.id}`, { method: "PUT", body: JSON.stringify({ ...iv, status: e.target.value }) }).then(load).catch((err) => setError(err.message))}
-                  >
-                    <option value="open">Open</option>
-                    <option value="in_progress">In progress</option>
-                    <option value="resolved">Completed</option>
-                    <option value="cancelled">Cancelled</option>
-                  </select>
-                  <input
-                    className="min-w-[12rem] flex-1 rounded border border-sand px-2 py-1 text-sm"
-                    placeholder="Outcome / notes"
-                    defaultValue={iv.outcome || ""}
-                    onBlur={(e) => {
-                      if (e.target.value === (iv.outcome || "")) return;
-                      api(`/api/interventions/${iv.id}`, { method: "PUT", body: JSON.stringify({ ...iv, outcome: e.target.value }) }).then(load).catch((err) => setError(err.message));
-                    }}
-                  />
+                  <label className="text-sm">
+                    <span className="sr-only">Intervention status</span>
+                    <select
+                      aria-label="Intervention status"
+                      className="rounded border border-sand px-2 py-1 text-sm"
+                      value={iv.status}
+                      onChange={(e) => api(`/api/interventions/${iv.id}`, { method: "PUT", body: JSON.stringify({ ...iv, status: e.target.value }) }).then(load).catch((err) => setError(err.message))}
+                    >
+                      <option value="open">Open</option>
+                      <option value="in_progress">In progress</option>
+                      <option value="resolved">Completed</option>
+                      <option value="cancelled">Cancelled</option>
+                    </select>
+                  </label>
+                  <label className="min-w-[12rem] flex-1 text-sm">
+                    <span className="sr-only">Outcome notes</span>
+                    <input
+                      aria-label="Outcome notes"
+                      className="w-full rounded border border-sand px-2 py-1 text-sm"
+                      placeholder="Outcome / notes"
+                      defaultValue={iv.outcome || ""}
+                      onBlur={(e) => {
+                        if (e.target.value === (iv.outcome || "")) return;
+                        api(`/api/interventions/${iv.id}`, { method: "PUT", body: JSON.stringify({ ...iv, outcome: e.target.value }) }).then(load).catch((err) => setError(err.message));
+                      }}
+                    />
+                  </label>
                 </div>
               ) : null}
             </Card>

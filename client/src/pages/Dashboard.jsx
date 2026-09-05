@@ -12,6 +12,7 @@ import {
 } from "chart.js";
 import { api, getToken } from "../api.js";
 import { Card, InsightBanner, ProgressBar, StatusPill, inputClass } from "../components/ui.jsx";
+import { TodaySummary } from "./DecisionBoard.jsx";
 
 ChartJS.register(ArcElement, BarElement, CategoryScale, LinearScale, Tooltip, Legend);
 
@@ -51,7 +52,16 @@ export default function Dashboard() {
     URL.revokeObjectURL(url);
   }
 
-  if (error) return <p className="text-accent">{error}</p>;
+  if (error) {
+    return (
+      <div>
+        <p className="text-accent">{error}</p>
+        <button type="button" className="mt-2 text-sm text-navy underline" onClick={() => api(`/api/dashboard${query}`).then(setData).catch((e) => setError(e.message))}>
+          Try again
+        </button>
+      </div>
+    );
+  }
   if (!data) return <p>Loading command center…</p>;
 
   const { stats, health } = data;
@@ -148,6 +158,8 @@ export default function Dashboard() {
           </Card>
         ))}
       </div>
+
+      {data.today ? <TodaySummary data={data.today} /> : null}
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>
