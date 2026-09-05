@@ -59,7 +59,15 @@ Role checks run on the API. Members receive **HTTP 403** on write endpoints even
 7. Create a project as Admin (you become manager). Log out.
 8. Log in as Ishika (Project Manager). Confirm she can edit her own projects and **cannot** edit the Admin-owned project (403).
 9. Log out. Log in as Disha (Member). Confirm read-only UI and that a write request returns **403**.
-10. Generate the monthly brief. Import a CSV (Admin). Export portfolio CSV from the command center.
+10. Generate the monthly brief. Open **Outlook** on a Critical project (forecast + NLP suggestion). Inspect **Pre-construction**. Download Flash / QPISR PDF.
+
+## Decision-support add-ons (prototype)
+
+- **Outlook / forecast:** trajectory estimate (not trained ML, not PAIMANA).
+- **NLP bottleneck classifier:** Naive Bayes on **synthetic** phrases; suggestions never overwrite a manual category until accepted.
+- **Pre-construction clearances** feed health + forecast.
+- **Funds released** sits beside sanctioned / anticipated / expenditure.
+- **In-app alerts**, **Flash report**, **QPISR-style report** + PDF. Not official government documents.
 
 ## Deliberately not included
 

@@ -9,7 +9,7 @@ import { Card, Field, InsightBanner, ProgressBar, StatusPill, inputClass } from 
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
-const tabs = ["Risk", "Finance", "Tasks", "Milestones", "Issues", "Interventions", "Team", "Timeline", "Audit"];
+const tabs = ["Outlook", "Risk", "Finance", "Pre-construction", "Tasks", "Milestones", "Issues", "Interventions", "Team", "Timeline", "Audit"];
 
 const emptyTask = {
   title: "",
@@ -34,6 +34,9 @@ export default function ProjectDetail() {
   const [meta, setMeta] = useState({ delay_reasons: [] });
   const [issueForm, setIssueForm] = useState({ title: "", category: "procurement", severity: "high", owner: "", intervention: "", due_date: "" });
   const [ivForm, setIvForm] = useState({ action: "", authority: "", assigned_officer: "", due_date: "", priority: "high" });
+  const [preconForm, setPreconForm] = useState({ name: "", category: "environmental_clearance", status: "not_started", planned_completion: "", authority: "", remarks: "" });
+  const [quick, setQuick] = useState({ reported_progress: "", status: "active", blocker: "", remarks: "" });
+  const [nlpLive, setNlpLive] = useState(null);
 
   function load() {
     return api(`/api/projects/${id}`)
@@ -399,6 +402,77 @@ export default function ProjectDetail() {
         </Card>
       ) : null}
 
+      {tab === "Outlook" ? (
+        <div className="space-y-4">
+          <Card>
+            <p className="text-xs uppercase text-ink/50">Project outlook</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <StatusPill status={project.insights?.outlook?.current_health} />
+              <span className="text-sm">Forecast schedule risk: {project.insights?.forecast?.schedule_risk}</span>
+              <span className="text-sm">Estimated delay: {project.insights?.forecast?.estimated_slippage_days} days</span>
+            </div>
+            <p className="mt-3 text-sm">Estimated completion: {project.insights?.forecast?.estimated_completion}</p>
+            <p className="mt-1 text-xs text-ink/50">{project.insights?.forecast?.method_note}</p>
+            <h3 className="mt-4 font-medium">Why?</h3>
+            <ul className="mt-2 list-disc pl-5 text-sm">
+              {(project.insights?.outlook?.why || []).map((w) => <li key={w}>{w}</li>)}
+            </ul>
+            {project.insights?.outlook?.bottleneck ? (
+              <div className="mt-4 rounded-lg bg-paper p-3 text-sm">
+                <p className="font-medium">AI-assisted bottleneck (suggestion)</p>
+                <p>{project.insights.outlook.bottleneck.label} · confidence {project.insights.outlook.bottleneck.confidence_band}
+                  {project.insights.outlook.bottleneck.confidence != null ? ` (${Math.round(project.insights.outlook.bottleneck.confidence * 100)}%)` : ""}</p>
+                <p className="mt-1 text-xs text-ink/60">{project.insights.outlook.bottleneck.explanation}</p>
+              </div>
+            ) : null}
+            {project.insights?.outlook?.open_intervention ? (
+              <p className="mt-3 text-sm">Open intervention: {project.insights.outlook.open_intervention.action}</p>
+            ) : null}
+            <p className="mt-3 text-sm font-medium">{project.insights?.outlook?.recommended_action}</p>
+            <p className="mt-2 text-xs text-ink/45">{project.insights?.outlook?.disclaimer}</p>
+          </Card>
+          {canManage ? (
+            <Card>
+              <h3 className="font-medium">Quick ground update</h3>
+              <p className="mt-1 text-xs text-ink/50">Short field update. NLP suggests a delay category; it does not overwrite your coded reason until you accept it on an issue.</p>
+              <form
+                className="mt-3 grid gap-3 md:grid-cols-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  api(`/api/projects/${id}/quick-update`, { method: "POST", body: JSON.stringify(quick) })
+                    .then((data) => {
+                      setNlpLive(data.nlp_suggestion);
+                      setQuick({ reported_progress: "", status: project.status, blocker: "", remarks: "" });
+                      load();
+                    })
+                    .catch((err) => setError(err.message));
+                }}
+              >
+                <Field label="Reported progress %"><input className={inputClass} type="number" min="0" max="100" value={quick.reported_progress} onChange={(e) => setQuick({ ...quick, reported_progress: e.target.value })} /></Field>
+                <Field label="Status">
+                  <select className={inputClass} value={quick.status} onChange={(e) => setQuick({ ...quick, status: e.target.value })}>
+                    <option value="planning">Planning</option>
+                    <option value="active">Active</option>
+                    <option value="on_hold">On hold</option>
+                    <option value="completed">Completed</option>
+                  </select>
+                </Field>
+                <div className="md:col-span-2">
+                  <Field label="Main delay / blocker">
+                    <input className={inputClass} value={quick.blocker} onChange={(e) => setQuick({ ...quick, blocker: e.target.value })} />
+                  </Field>
+                </div>
+                <div className="md:col-span-2">
+                  <Field label="Remarks"><textarea className={inputClass} rows={2} value={quick.remarks} onChange={(e) => setQuick({ ...quick, remarks: e.target.value })} /></Field>
+                </div>
+                {nlpLive ? <p className="md:col-span-2 text-sm">Suggestion: {nlpLive.label} ({nlpLive.confidence_band})</p> : null}
+                <button className="rounded-md bg-navy px-4 py-2 text-sm text-white" type="submit">Save update</button>
+              </form>
+            </Card>
+          ) : null}
+        </div>
+      ) : null}
+
       {tab === "Risk" ? (
         <div className="space-y-4">
           <Card>
@@ -461,10 +535,11 @@ export default function ProjectDetail() {
 
       {tab === "Finance" ? (
         <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Card><p className="text-xs text-ink/50 uppercase">Original approved cost</p><p className="font-serif mt-1 text-2xl">₹{project.insights.finance.original_cost} Cr</p></Card>
-            <Card><p className="text-xs text-ink/50 uppercase">Latest revised cost</p><p className="font-serif mt-1 text-2xl">₹{project.insights.finance.revised_cost} Cr</p></Card>
-            <Card><p className="text-xs text-ink/50 uppercase">Cumulative expenditure</p><p className="font-serif mt-1 text-2xl">₹{project.insights.finance.expenditure} Cr</p></Card>
+          <div className="grid gap-4 sm:grid-cols-4">
+            <Card><p className="text-xs text-ink/50 uppercase">Approved / sanctioned</p><p className="font-serif mt-1 text-2xl">₹{project.insights.finance.sanctioned_cost ?? project.insights.finance.original_cost} Cr</p></Card>
+            <Card><p className="text-xs text-ink/50 uppercase">Latest anticipated</p><p className="font-serif mt-1 text-2xl">₹{project.insights.finance.anticipated_cost ?? project.insights.finance.revised_cost} Cr</p></Card>
+            <Card><p className="text-xs text-ink/50 uppercase">Funds released</p><p className="font-serif mt-1 text-2xl">₹{project.insights.finance.funds_released ?? 0} Cr</p></Card>
+            <Card><p className="text-xs text-ink/50 uppercase">Expenditure</p><p className="font-serif mt-1 text-2xl">₹{project.insights.finance.expenditure} Cr</p></Card>
           </div>
           <div className="grid gap-4 sm:grid-cols-3">
             <Card><p className="text-xs text-ink/50 uppercase">Cost overrun</p><p className="font-serif mt-1 text-2xl">{project.insights.finance.cost_overrun_pct}%</p></Card>
@@ -472,7 +547,8 @@ export default function ProjectDetail() {
             <Card><p className="text-xs text-ink/50 uppercase">Time overrun</p><p className="font-serif mt-1 text-2xl">{project.insights.finance.time_overrun_days} days</p></Card>
           </div>
           <Card>
-            <p className="text-sm">Expected expenditure ₹{project.insights.finance.expected_expenditure} Cr · Actual ₹{project.insights.finance.expenditure} Cr · Variance ₹{project.insights.finance.expenditure_variance} Cr</p>
+            <p className="text-sm">Release utilization {project.insights.finance.release_utilization ?? 0}% · Expenditure utilization {project.insights.finance.expenditure_utilization ?? 0}% · Funding gap ₹{project.insights.finance.funding_gap ?? 0} Cr · Physical vs financial mismatch {project.insights.finance.physical_financial_mismatch ?? 0} pts</p>
+            <p className="mt-2 text-sm">Expected expenditure ₹{project.insights.finance.expected_expenditure} Cr · Actual ₹{project.insights.finance.expenditure} Cr · Variance ₹{project.insights.finance.expenditure_variance} Cr</p>
             <p className="mt-2 text-sm text-ink/60">Original completion {project.insights.finance.original_end} · Revised {project.insights.finance.revised_end}</p>
           </Card>
           {canManage ? (
@@ -490,6 +566,7 @@ export default function ProjectDetail() {
                       original_cost: fd.get("original_cost"),
                       revised_cost: fd.get("revised_cost"),
                       expenditure: fd.get("expenditure"),
+                      funds_released: fd.get("funds_released"),
                       original_end_date: fd.get("original_end_date"),
                       revised_end_date: fd.get("revised_end_date"),
                       delay_reason: fd.get("delay_reason"),
@@ -502,6 +579,7 @@ export default function ProjectDetail() {
                 <Field label="Original cost (₹ Cr)"><input name="original_cost" type="number" step="0.01" defaultValue={project.original_cost} className={inputClass} /></Field>
                 <Field label="Revised cost (₹ Cr)"><input name="revised_cost" type="number" step="0.01" defaultValue={project.revised_cost} className={inputClass} /></Field>
                 <Field label="Expenditure (₹ Cr)"><input name="expenditure" type="number" step="0.01" defaultValue={project.expenditure} className={inputClass} /></Field>
+                <Field label="Funds released (₹ Cr)"><input name="funds_released" type="number" step="0.01" defaultValue={project.funds_released ?? 0} className={inputClass} /></Field>
                 <Field label="Reported physical progress (%)"><input name="reported_physical_progress" type="number" step="0.1" min="0" max="100" defaultValue={project.reported_physical_progress ?? ""} className={inputClass} /></Field>
                 <Field label="Original completion"><input name="original_end_date" type="date" defaultValue={project.original_end_date || project.end_date} className={inputClass} /></Field>
                 <Field label="Revised completion"><input name="revised_end_date" type="date" defaultValue={project.revised_end_date || project.end_date} className={inputClass} /></Field>
@@ -519,6 +597,63 @@ export default function ProjectDetail() {
               </form>
             </Card>
           ) : null}
+        </div>
+      ) : null}
+
+      {tab === "Pre-construction" ? (
+        <div className="space-y-4">
+          <p className="text-sm text-ink/60">Clearances feed the current-health engine and the prototype forecast. This does not replace milestones.</p>
+          {canManage ? (
+            <Card>
+              <h3 className="font-medium">Add clearance / approval</h3>
+              <form
+                className="mt-3 grid gap-3 md:grid-cols-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  api(`/api/projects/${id}/preconstructions`, { method: "POST", body: JSON.stringify(preconForm) }).then(() => {
+                    setPreconForm({ name: "", category: "environmental_clearance", status: "not_started", planned_completion: "", authority: "", remarks: "" });
+                    load();
+                  }).catch((err) => setError(err.message));
+                }}
+              >
+                <Field label="Name"><input className={inputClass} value={preconForm.name} onChange={(e) => setPreconForm({ ...preconForm, name: e.target.value })} required /></Field>
+                <Field label="Category">
+                  <select className={inputClass} value={preconForm.category} onChange={(e) => setPreconForm({ ...preconForm, category: e.target.value })}>
+                    {(meta.precon_categories || []).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Status">
+                  <select className={inputClass} value={preconForm.status} onChange={(e) => setPreconForm({ ...preconForm, status: e.target.value })}>
+                    {(meta.precon_statuses || []).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Planned completion"><input type="date" className={inputClass} value={preconForm.planned_completion} onChange={(e) => setPreconForm({ ...preconForm, planned_completion: e.target.value })} /></Field>
+                <Field label="Authority"><input className={inputClass} value={preconForm.authority} onChange={(e) => setPreconForm({ ...preconForm, authority: e.target.value })} /></Field>
+                <Field label="Remarks"><input className={inputClass} value={preconForm.remarks} onChange={(e) => setPreconForm({ ...preconForm, remarks: e.target.value })} /></Field>
+                <button className="rounded-md bg-navy px-4 py-2 text-sm text-white" type="submit">Save</button>
+              </form>
+            </Card>
+          ) : null}
+          {(project.preconstructions || []).map((c) => (
+            <Card key={c.id} className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="font-medium">{c.name}</p>
+                <p className="text-sm text-ink/60">{c.authority} · planned {c.planned_completion || "—"}</p>
+                <p className="text-sm">{c.remarks}</p>
+              </div>
+              {canManage ? (
+                <select
+                  className="rounded border border-sand px-2 py-1 text-sm"
+                  value={c.status}
+                  onChange={(e) => api(`/api/preconstructions/${c.id}`, { method: "PUT", body: JSON.stringify({ ...c, status: e.target.value }) }).then(load)}
+                >
+                  {(meta.precon_statuses || []).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                </select>
+              ) : (
+                <StatusPill status={c.status} />
+              )}
+            </Card>
+          ))}
         </div>
       ) : null}
 
@@ -563,6 +698,26 @@ export default function ProjectDetail() {
                 <p className="font-medium">{issue.title}</p>
                 <p className="text-sm text-ink/60">{issue.owner} · due {issue.due_date || "—"}</p>
                 <p className="mt-1 text-sm">{issue.intervention}</p>
+                {issue.suggested_category ? (
+                  <p className="mt-2 text-xs text-ink/55">
+                    NLP suggestion: {issue.suggested_category} ({issue.nlp_confidence != null ? Math.round(issue.nlp_confidence * 100) : "—"}%)
+                    {issue.nlp_accepted_category ? ` · accepted as ${issue.nlp_accepted_category}` : " · not applied until accepted"}
+                    {canManage && issue.suggested_category !== issue.category ? (
+                      <button
+                        className="ml-2 text-navy underline"
+                        type="button"
+                        onClick={() =>
+                          api(`/api/issues/${issue.id}`, {
+                            method: "PUT",
+                            body: JSON.stringify({ ...issue, nlp_accepted_category: issue.suggested_category, category: issue.suggested_category }),
+                          }).then(load)
+                        }
+                      >
+                        Accept suggestion
+                      </button>
+                    ) : null}
+                  </p>
+                ) : null}
               </div>
               <div className="flex items-center gap-2">
                 <StatusPill status={issue.severity} />

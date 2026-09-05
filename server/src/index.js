@@ -16,10 +16,16 @@ import { seedIfEmpty } from "./seed.js";
 import { analyzeProject } from "./insights.js";
 import { authRequired, requireRole, signToken } from "./auth.js";
 import { assertCanDeleteUser, normalizeCreatableRole } from "./rbac.js";
-import { DELAY_REASONS, MINISTRIES, SECTORS, STATES, delayLabel } from "./constants.js";
+import { DELAY_REASONS, MINISTRIES, SECTORS, STATES, delayLabel, PRECON_CATEGORIES, PRECON_STATUSES } from "./constants.js";
 import { logAudit, listAudit } from "./audit.js";
 import { parseCsv, toCsv } from "./csv.js";
 import { validateProjectNumbers } from "./validate.js";
+import { forecastProject } from "./forecast.js";
+import { buildOutlook } from "./outlook.js";
+import { classifyBottleneck, NLP_VERSION } from "./nlp.js";
+import { deriveSmartAlerts, syncProjectAlerts } from "./alerts.js";
+import { nlpCounts, flashReportPayload, qpisrPayload, reportLines } from "./reports.js";
+import { buildSimplePdf } from "./pdf.js";
 
 seedIfEmpty();
 
@@ -46,12 +52,27 @@ function projectOr404(id, res) {
 }
 
 function intel(project) {
-  return analyzeProject({
+  const insights = analyzeProject({
     project,
     tasks: project.tasks || [],
     milestones: project.milestones || [],
     issues: project.issues || [],
+    preconstructions: project.preconstructions || [],
   });
+  const forecast = forecastProject({
+    project,
+    insights,
+    preconstructions: project.preconstructions || [],
+  });
+  const outlook = buildOutlook({
+    project,
+    insights,
+    forecast,
+    issues: project.issues || [],
+    interventions: project.interventions || [],
+    preconstructions: project.preconstructions || [],
+  });
+  return { ...insights, forecast, outlook };
 }
 
 const HEALTH_RANK = { on_track: 0, watch: 1, at_risk: 2, critical: 3 };
@@ -78,7 +99,20 @@ function loadVisible(user) {
   return visibleProjectIds(user)
     .map((id) => enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)))
     .filter(Boolean)
-    .map((p) => ({ ...p, insights: intel(p) }));
+    .map((p) => {
+      const insights = intel(p);
+      recordHealth(p.id, insights);
+      syncProjectAlerts(db, {
+        project: p,
+        alerts: deriveSmartAlerts({
+          project: p,
+          insights,
+          forecast: insights.forecast,
+          preconstructions: p.preconstructions || [],
+        }),
+      });
+      return { ...p, insights };
+    });
 }
 
 function matchesFilters(p, q) {
@@ -106,6 +140,11 @@ function projectWriteFields(body, existing = {}) {
     original_cost: Number(body.original_cost ?? existing.original_cost ?? 0),
     revised_cost: Number(body.revised_cost ?? existing.revised_cost ?? 0),
     expenditure: Number(body.expenditure ?? existing.expenditure ?? 0),
+    funds_released: Number(
+      body.funds_released === undefined || body.funds_released === ""
+        ? existing.funds_released ?? 0
+        : body.funds_released
+    ),
     original_end_date: String(body.original_end_date ?? existing.original_end_date ?? start),
     revised_end_date: String(body.revised_end_date ?? existing.revised_end_date ?? end),
     delay_reason: String(body.delay_reason ?? existing.delay_reason ?? ""),
@@ -203,6 +242,7 @@ app.get("/api/dashboard", authRequired, (req, res) => {
   let original = 0;
   let revised = 0;
   let expenditure = 0;
+  let released = 0;
   const upcoming = [];
   const delayedTasks = [];
   const warnings = [];
@@ -216,6 +256,7 @@ app.get("/api/dashboard", authRequired, (req, res) => {
     original += Number(p.original_cost || 0);
     revised += Number(p.revised_cost || 0);
     expenditure += Number(p.expenditure || 0);
+    released += Number(p.funds_released || 0);
     const band = p.insights.health.band;
     if (health[band] !== undefined) health[band] += 1;
     if (p.delay_reason) reasonCounts[p.delay_reason] = (reasonCounts[p.delay_reason] || 0) + 1;
@@ -270,12 +311,27 @@ app.get("/api/dashboard", authRequired, (req, res) => {
   ).length;
   const issuesResolved = visibleIssues.filter((i) => i.status === "resolved").length;
 
+  const forecastCounts = { high: 0, medium: 0, low: 0 };
+  for (const p of projects) {
+    const fr = p.insights?.forecast?.schedule_risk;
+    if (forecastCounts[fr] !== undefined) forecastCounts[fr] += 1;
+  }
+  const ids = projects.map((p) => p.id);
+  const smartAlerts = ids.length
+    ? db
+        .prepare(
+          `SELECT * FROM alerts WHERE project_id IN (${ids.map(() => "?").join(",")}) ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END, id DESC LIMIT 20`
+        )
+        .all(...ids)
+    : [];
+
   res.json({
     stats: {
       ...buckets,
       overall_progress: projects.length ? Math.round(progressSum / projects.length) : 0,
       original_cost: Math.round(original * 10) / 10,
       revised_cost: Math.round(revised * 10) / 10,
+      funds_released: Math.round(released * 10) / 10,
       expenditure: Math.round(expenditure * 10) / 10,
     },
     health,
@@ -284,6 +340,9 @@ app.get("/api/dashboard", authRequired, (req, res) => {
     upcoming_deadlines: upcoming.slice(0, 8),
     delayed_tasks: delayedTasks.slice(0, 8),
     early_warnings: warnings.slice(0, 8),
+    forecast_risk: forecastCounts,
+    smart_alerts: smartAlerts,
+    nlp_bottlenecks: nlpCounts(projects).slice(0, 8),
     risk_alerts: warnings.slice(0, 6).map((w) => ({
       project_id: w.project_id,
       project_name: w.project_name,
@@ -318,6 +377,9 @@ app.get("/api/dashboard", authRequired, (req, res) => {
       calculated_progress: p.insights.calculated_progress,
       reported_physical_progress: p.insights.reported_physical_progress,
       progress_method: p.insights.progress_method,
+      forecast: p.insights.forecast,
+      outlook: p.insights.outlook,
+      funds_released: p.funds_released,
     })),
   });
 });
@@ -379,9 +441,9 @@ app.post("/api/projects", authRequired, requireRole("admin", "project_manager"),
   const info = db
     .prepare(
       `INSERT INTO projects (name, description, start_date, end_date, status, manager_id, code, ministry, sector, state,
-        original_cost, revised_cost, expenditure, original_end_date, revised_end_date, delay_reason, delay_notes,
+        original_cost, revised_cost, expenditure, funds_released, original_end_date, revised_end_date, delay_reason, delay_notes,
         data_source, reported_physical_progress)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?)`
     )
     .run(
       fields.name,
@@ -397,6 +459,7 @@ app.post("/api/projects", authRequired, requireRole("admin", "project_manager"),
       fields.original_cost,
       fields.revised_cost,
       fields.expenditure,
+      fields.funds_released,
       fields.original_end_date,
       fields.revised_end_date,
       fields.delay_reason,
@@ -442,7 +505,7 @@ app.put("/api/projects/:id", authRequired, requireRole("admin", "project_manager
   if (financeError) return res.status(400).json({ error: financeError });
   db.prepare(
     `UPDATE projects SET name=?, description=?, start_date=?, end_date=?, status=?, code=?, ministry=?, sector=?, state=?,
-     original_cost=?, revised_cost=?, expenditure=?, original_end_date=?, revised_end_date=?, delay_reason=?, delay_notes=?,
+     original_cost=?, revised_cost=?, expenditure=?, funds_released=?, original_end_date=?, revised_end_date=?, delay_reason=?, delay_notes=?,
      reported_physical_progress=?
      WHERE id=?`
   ).run(
@@ -458,6 +521,7 @@ app.put("/api/projects/:id", authRequired, requireRole("admin", "project_manager
     fields.original_cost,
     fields.revised_cost,
     fields.expenditure,
+    fields.funds_released,
     fields.original_end_date,
     fields.revised_end_date,
     fields.delay_reason,
@@ -471,8 +535,8 @@ app.put("/api/projects/:id", authRequired, requireRole("admin", "project_manager
     entityId: id,
     projectId: id,
     detail: `${req.user.name} changed ${row.name} status from ${row.status} to ${fields.status}.`,
-    previous: `status=${row.status}; revised_cost=${row.revised_cost}; expenditure=${row.expenditure}; reported_physical_progress=${row.reported_physical_progress}`,
-    next: `status=${fields.status}; revised_cost=${fields.revised_cost}; expenditure=${fields.expenditure}; reported_physical_progress=${fields.reported_physical_progress}`,
+    previous: `status=${row.status}; revised_cost=${row.revised_cost}; expenditure=${row.expenditure}; funds_released=${row.funds_released}; reported_physical_progress=${row.reported_physical_progress}`,
+    next: `status=${fields.status}; revised_cost=${fields.revised_cost}; expenditure=${fields.expenditure}; funds_released=${fields.funds_released}; reported_physical_progress=${fields.reported_physical_progress}`,
   });
   const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id));
   const insights = intel(project);
@@ -487,6 +551,9 @@ app.delete("/api/projects/:id", authRequired, requireRole("admin", "project_mana
   if (!canManageProject(req.user, id)) {
     return res.status(403).json({ error: "Only the manager or an admin can delete this project." });
   }
+  db.prepare("DELETE FROM alerts WHERE project_id = ?").run(id);
+  db.prepare("DELETE FROM preconstructions WHERE project_id = ?").run(id);
+  db.prepare("DELETE FROM quick_updates WHERE project_id = ?").run(id);
   db.prepare("DELETE FROM interventions WHERE project_id = ?").run(id);
   db.prepare("DELETE FROM issues WHERE project_id = ?").run(id);
   db.prepare("DELETE FROM tasks WHERE project_id = ?").run(id);
@@ -731,7 +798,15 @@ app.get("/api/reports", authRequired, (req, res) => {
 });
 
 app.get("/api/meta", authRequired, (_req, res) => {
-  res.json({ delay_reasons: DELAY_REASONS, ministries: MINISTRIES, sectors: SECTORS, states: STATES });
+  res.json({
+    delay_reasons: DELAY_REASONS,
+    ministries: MINISTRIES,
+    sectors: SECTORS,
+    states: STATES,
+    precon_categories: PRECON_CATEGORIES,
+    precon_statuses: PRECON_STATUSES,
+    nlp_version: NLP_VERSION,
+  });
 });
 
 app.get("/api/briefing", authRequired, (req, res) => {
@@ -812,6 +887,13 @@ app.get("/api/briefing", authRequired, (req, res) => {
     newly_risk: newlyRisk,
     improving,
     deteriorating,
+    nlp_bottlenecks: nlpCounts(projects),
+    precon_blockers: projects.flatMap((p) =>
+      (p.preconstructions || [])
+        .filter((c) => c.status === "delayed" || c.status === "blocked")
+        .map((c) => `${p.name}: ${c.name} (${c.status})`)
+    ),
+    high_forecast: projects.filter((p) => p.insights?.forecast?.schedule_risk === "high").map((p) => p.name),
   });
 });
 
@@ -837,6 +919,8 @@ app.get("/api/export/projects.csv", authRequired, (req, res) => {
     "data_source",
     "calculated_progress",
     "reported_physical_progress",
+    "funds_released",
+    "forecast_schedule_risk",
   ];
   const rows = projects.map((p) => ({
     code: p.code,
@@ -858,6 +942,8 @@ app.get("/api/export/projects.csv", authRequired, (req, res) => {
     data_source: p.data_source || "manual",
     calculated_progress: p.progress,
     reported_physical_progress: p.reported_physical_progress ?? "",
+    funds_released: p.funds_released ?? 0,
+    forecast_schedule_risk: p.insights.forecast?.schedule_risk || "",
   }));
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", "attachment; filename=projects.csv");
@@ -902,15 +988,16 @@ app.post("/api/import/projects", authRequired, requireRole("admin"), (req, res) 
       revised_end_date: r.revised_end_date || r["Revised End Date"] || end,
       status: "active",
       reported_physical_progress: r.reported_physical_progress || r["Reported Physical Progress"],
+      funds_released: r.funds_released || r["Funds Released"],
     });
     const financeError = validateProjectNumbers(fields);
     if (financeError) continue;
     const info = db
       .prepare(
         `INSERT INTO projects (name, description, start_date, end_date, status, manager_id, code, ministry, sector, state,
-          original_cost, revised_cost, expenditure, original_end_date, revised_end_date, delay_reason, delay_notes,
+          original_cost, revised_cost, expenditure, funds_released, original_end_date, revised_end_date, delay_reason, delay_notes,
           data_source, reported_physical_progress)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'imported', ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'imported', ?)`
       )
       .run(
         fields.name,
@@ -926,6 +1013,7 @@ app.post("/api/import/projects", authRequired, requireRole("admin"), (req, res) 
         fields.original_cost,
         fields.revised_cost,
         fields.expenditure,
+        fields.funds_released,
         fields.original_end_date,
         fields.revised_end_date,
         "",
@@ -946,24 +1034,31 @@ app.post("/api/projects/:id/issues", authRequired, requireRole("admin", "project
   if (!canManageProject(req.user, id)) return res.status(403).json({ error: "Cannot add issues." });
   const title = String(req.body?.title || "").trim();
   if (!title) return res.status(400).json({ error: "Issue title is required." });
+  const suggestion = classifyBottleneck([title, String(req.body?.intervention || "")].join(" "));
+  const category = String(req.body?.category || "").trim() || "other";
   const info = db
     .prepare(
-      `INSERT INTO issues (project_id, title, category, severity, owner, intervention, due_date, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO issues (project_id, title, category, severity, owner, intervention, due_date, status, created_at,
+        suggested_category, nlp_confidence, nlp_version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
       title,
-      req.body?.category || "other",
+      category,
       req.body?.severity || "medium",
       String(req.body?.owner || ""),
       String(req.body?.intervention || ""),
       req.body?.due_date || null,
       req.body?.status || "open",
-      new Date().toISOString()
+      new Date().toISOString(),
+      suggestion.category,
+      suggestion.confidence,
+      suggestion.version
     );
+  const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id));
   logAudit(req.user, { action: "opened issue", entity: "issue", entityId: info.lastInsertRowid, projectId: id, detail: title });
-  res.status(201).json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)));
+  res.status(201).json({ ...project, insights: intel(project), nlp_suggestion: suggestion });
 });
 
 app.put("/api/issues/:id", authRequired, requireRole("admin", "project_manager"), (req, res) => {
@@ -971,14 +1066,19 @@ app.put("/api/issues/:id", authRequired, requireRole("admin", "project_manager")
   const issue = db.prepare("SELECT * FROM issues WHERE id = ?").get(id);
   if (!issue) return res.status(404).json({ error: "Issue not found." });
   if (!canManageProject(req.user, issue.project_id)) return res.status(403).json({ error: "Cannot update this issue." });
-  db.prepare("UPDATE issues SET title=?, category=?, severity=?, owner=?, intervention=?, due_date=?, status=? WHERE id=?").run(
+  const accepted = req.body?.nlp_accepted_category;
+  const nextCategory = accepted ? String(accepted) : String(req.body?.category ?? issue.category);
+  db.prepare(
+    "UPDATE issues SET title=?, category=?, severity=?, owner=?, intervention=?, due_date=?, status=?, nlp_accepted_category=? WHERE id=?"
+  ).run(
     String(req.body?.title ?? issue.title),
-    String(req.body?.category ?? issue.category),
+    nextCategory,
     String(req.body?.severity ?? issue.severity),
     String(req.body?.owner ?? issue.owner),
     String(req.body?.intervention ?? issue.intervention),
     req.body?.due_date ?? issue.due_date,
     String(req.body?.status ?? issue.status),
+    accepted ? String(accepted) : issue.nlp_accepted_category,
     id
   );
   logAudit(req.user, {
@@ -1044,6 +1144,322 @@ app.put("/api/interventions/:id", authRequired, requireRole("admin", "project_ma
     next: req.body?.status ?? iv.status,
   });
   res.json(enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(iv.project_id)));
+});
+
+app.post("/api/nlp/classify", authRequired, (req, res) => {
+  const text = String(req.body?.text || "");
+  res.json(classifyBottleneck(text));
+});
+
+app.get("/api/alerts", authRequired, (req, res) => {
+  loadVisible(req.user);
+  const ids = visibleProjectIds(req.user);
+  if (!ids.length) return res.json([]);
+  const rows = db
+    .prepare(
+      `SELECT a.*, p.name AS project_name FROM alerts a JOIN projects p ON p.id = a.project_id
+       WHERE a.project_id IN (${ids.map(() => "?").join(",")})
+       ORDER BY CASE a.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END, a.id DESC`
+    )
+    .all(...ids);
+  res.json(rows);
+});
+
+app.post("/api/alerts/:id/read", authRequired, (req, res) => {
+  const id = parseId(req.params.id);
+  const row = db.prepare("SELECT * FROM alerts WHERE id = ?").get(id);
+  if (!row) return res.status(404).json({ error: "Alert not found." });
+  if (!canAccessProject(req.user, row.project_id)) return res.status(403).json({ error: "No access." });
+  db.prepare("UPDATE alerts SET read_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+  res.json({ ok: true });
+});
+
+app.post("/api/projects/:id/preconstructions", authRequired, requireRole("admin", "project_manager"), (req, res) => {
+  const id = parseId(req.params.id);
+  const row = projectOr404(id, res);
+  if (!row) return;
+  if (!canManageProject(req.user, id)) return res.status(403).json({ error: "Cannot add pre-construction items." });
+  const name = String(req.body?.name || "").trim();
+  if (!name) return res.status(400).json({ error: "Name is required." });
+  const planned = req.body?.planned_completion || null;
+  const actual = req.body?.actual_completion || null;
+  if (planned && !isISODate(planned)) return res.status(400).json({ error: "Dates must use YYYY-MM-DD." });
+  if (actual && !isISODate(actual)) return res.status(400).json({ error: "Dates must use YYYY-MM-DD." });
+  const info = db
+    .prepare(
+      `INSERT INTO preconstructions (project_id, name, category, status, planned_completion, actual_completion, authority, delay_reason, remarks)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      id,
+      name,
+      req.body?.category || "statutory",
+      req.body?.status || "not_started",
+      planned,
+      actual,
+      String(req.body?.authority || ""),
+      String(req.body?.delay_reason || ""),
+      String(req.body?.remarks || "")
+    );
+  logAudit(req.user, {
+    action: "added pre-construction item",
+    entity: "preconstruction",
+    entityId: info.lastInsertRowid,
+    projectId: id,
+    detail: name,
+    next: req.body?.status || "not_started",
+  });
+  const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id));
+  res.status(201).json({ ...project, insights: intel(project) });
+});
+
+app.put("/api/preconstructions/:id", authRequired, requireRole("admin", "project_manager"), (req, res) => {
+  const id = parseId(req.params.id);
+  const item = db.prepare("SELECT * FROM preconstructions WHERE id = ?").get(id);
+  if (!item) return res.status(404).json({ error: "Item not found." });
+  if (!canManageProject(req.user, item.project_id)) return res.status(403).json({ error: "Cannot update this item." });
+  const planned = req.body?.planned_completion ?? item.planned_completion;
+  const actual = req.body?.actual_completion ?? item.actual_completion;
+  if (planned && !isISODate(planned)) return res.status(400).json({ error: "Dates must use YYYY-MM-DD." });
+  if (actual && actual !== "" && !isISODate(actual)) return res.status(400).json({ error: "Dates must use YYYY-MM-DD." });
+  db.prepare(
+    `UPDATE preconstructions SET name=?, category=?, status=?, planned_completion=?, actual_completion=?, authority=?, delay_reason=?, remarks=?
+     WHERE id=?`
+  ).run(
+    String(req.body?.name ?? item.name).trim(),
+    String(req.body?.category ?? item.category),
+    String(req.body?.status ?? item.status),
+    planned || null,
+    actual || null,
+    String(req.body?.authority ?? item.authority),
+    String(req.body?.delay_reason ?? item.delay_reason),
+    String(req.body?.remarks ?? item.remarks),
+    id
+  );
+  logAudit(req.user, {
+    action: "updated pre-construction item",
+    entity: "preconstruction",
+    entityId: id,
+    projectId: item.project_id,
+    detail: `${item.status} → ${req.body?.status ?? item.status}`,
+    previous: item.status,
+    next: req.body?.status ?? item.status,
+  });
+  const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(item.project_id));
+  res.json({ ...project, insights: intel(project) });
+});
+
+app.post("/api/projects/:id/quick-update", authRequired, requireRole("admin", "project_manager"), (req, res) => {
+  const id = parseId(req.params.id);
+  const row = projectOr404(id, res);
+  if (!row) return;
+  if (!canManageProject(req.user, id)) return res.status(403).json({ error: "Cannot post a ground update." });
+  const blocker = String(req.body?.blocker || "").trim();
+  const remarks = String(req.body?.remarks || "").trim();
+  const progress = req.body?.reported_progress;
+  if (progress !== undefined && progress !== "" && progress != null) {
+    const n = Number(progress);
+    if (Number.isNaN(n) || n < 0 || n > 100) return res.status(400).json({ error: "Reported progress must be 0–100." });
+  }
+  const suggestion = classifyBottleneck([blocker, remarks].join(" "));
+  if (progress !== undefined && progress !== "" && progress != null) {
+    db.prepare("UPDATE projects SET reported_physical_progress = ? WHERE id = ?").run(Number(progress), id);
+  }
+  if (req.body?.status) {
+    db.prepare("UPDATE projects SET status = ? WHERE id = ?").run(String(req.body.status), id);
+  }
+  if (blocker) {
+    db.prepare("UPDATE projects SET delay_notes = ? WHERE id = ?").run(blocker, id);
+    if (!row.delay_reason || row.delay_reason === "other") {
+      // suggestion only stored on the update row — do not silently overwrite delay_reason
+    }
+  }
+  db.prepare(
+    `INSERT INTO quick_updates (project_id, reported_progress, status, blocker, remarks, suggested_category, created_at, user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    progress === undefined || progress === "" ? null : Number(progress),
+    req.body?.status || row.status,
+    blocker,
+    remarks,
+    suggestion.category,
+    new Date().toISOString(),
+    req.user.id
+  );
+  logAudit(req.user, {
+    action: "quick ground update",
+    entity: "project",
+    projectId: id,
+    detail: blocker || remarks || "progress update",
+    next: suggestion.category,
+  });
+  const project = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id));
+  res.status(201).json({ ...project, insights: intel(project), nlp_suggestion: suggestion });
+});
+
+app.post("/api/ingest/projects", authRequired, requireRole("admin", "project_manager"), (req, res) => {
+  const items = Array.isArray(req.body?.projects) ? req.body.projects : [req.body];
+  const results = [];
+  for (const raw of items.filter(Boolean)) {
+    const fields = projectWriteFields(raw);
+    if (!fields.name || !fields.start_date || !fields.end_date) {
+      results.push({ ok: false, error: "Name, start date, and end date are required.", name: fields.name });
+      continue;
+    }
+    if (!isISODate(fields.start_date) || !isISODate(fields.end_date)) {
+      results.push({ ok: false, error: "Dates must use YYYY-MM-DD.", name: fields.name });
+      continue;
+    }
+    const financeError = validateProjectNumbers(fields);
+    if (financeError) {
+      results.push({ ok: false, error: financeError, name: fields.name });
+      continue;
+    }
+    const dup = fields.code
+      ? db.prepare("SELECT id FROM projects WHERE code = ? AND code != ''").get(fields.code)
+      : db.prepare("SELECT id FROM projects WHERE name = ?").get(fields.name);
+    if (dup) {
+      results.push({ ok: false, error: "A project with this code or name already exists.", name: fields.name });
+      continue;
+    }
+    const managerId = req.user.role === "admin" && raw.manager_id ? Number(raw.manager_id) : req.user.id;
+    const info = db
+      .prepare(
+        `INSERT INTO projects (name, description, start_date, end_date, status, manager_id, code, ministry, sector, state,
+          original_cost, revised_cost, expenditure, funds_released, original_end_date, revised_end_date, delay_reason, delay_notes,
+          data_source, reported_physical_progress)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?)`
+      )
+      .run(
+        fields.name,
+        fields.description,
+        fields.start_date,
+        fields.end_date,
+        fields.status,
+        managerId,
+        fields.code,
+        fields.ministry,
+        fields.sector,
+        fields.state,
+        fields.original_cost,
+        fields.revised_cost,
+        fields.expenditure,
+        fields.funds_released,
+        fields.original_end_date,
+        fields.revised_end_date,
+        fields.delay_reason,
+        fields.delay_notes,
+        fields.reported_physical_progress
+      );
+    db.prepare("INSERT OR IGNORE INTO project_members (project_id, user_id) VALUES (?, ?)").run(info.lastInsertRowid, managerId);
+    logAudit(req.user, {
+      action: "ingested project",
+      entity: "project",
+      entityId: info.lastInsertRowid,
+      projectId: info.lastInsertRowid,
+      detail: fields.name,
+    });
+    results.push({ ok: true, id: info.lastInsertRowid, name: fields.name });
+  }
+  res.status(results.some((r) => r.ok) ? 201 : 400).json({ results });
+});
+
+function briefingBundle(req) {
+  const projects = loadVisible(req.user);
+  const now = new Date();
+  const period = now.toLocaleString("en-IN", { month: "long", year: "numeric" });
+  const health = { on_track: 0, watch: 0, at_risk: 0, critical: 0 };
+  const reasonCounts = {};
+  let costOverruns = 0;
+  let scheduleOverruns = 0;
+  const newlyRisk = [];
+  const improving = [];
+  const deteriorating = [];
+  for (const p of projects) {
+    health[p.insights.health.band] = (health[p.insights.health.band] || 0) + 1;
+    if (p.delay_reason) reasonCounts[p.delay_reason] = (reasonCounts[p.delay_reason] || 0) + 1;
+    if (p.insights.finance.cost_overrun_pct >= 5) costOverruns += 1;
+    if (p.insights.finance.time_overrun_days >= 1) scheduleOverruns += 1;
+    const prev = p.previous_health_band || "";
+    const cur = p.insights.health.band;
+    const prevRank = HEALTH_RANK[prev];
+    const curRank = HEALTH_RANK[cur] ?? 0;
+    if ((prev === "on_track" || prev === "watch") && (cur === "at_risk" || cur === "critical")) newlyRisk.push(p.name);
+    if (prevRank != null && curRank < prevRank) improving.push(p.name);
+    if (prevRank != null && curRank > prevRank) deteriorating.push(p.name);
+  }
+  const attention = health.at_risk + health.critical + health.watch;
+  const visibleIds = projects.map((p) => p.id);
+  const interventions = visibleIds.length
+    ? db
+        .prepare(
+          `SELECT * FROM interventions WHERE status != 'resolved' AND project_id IN (${visibleIds.map(() => "?").join(",")}) ORDER BY due_date LIMIT 12`
+        )
+        .all(...visibleIds)
+    : [];
+  const precon_blockers = projects.flatMap((p) =>
+    (p.preconstructions || [])
+      .filter((c) => c.status === "delayed" || c.status === "blocked")
+      .map((c) => `${p.name}: ${c.name} (${c.status})`)
+  );
+  return {
+    generated_at: now.toISOString(),
+    period,
+    total_projects: projects.length,
+    requiring_attention: attention,
+    critical_projects: health.critical,
+    health,
+    newly_risk: newlyRisk,
+    improving,
+    deteriorating,
+    cost_overruns: costOverruns,
+    schedule_overruns: scheduleOverruns,
+    major_delay_reasons: Object.entries(reasonCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([id, count]) => ({ id, label: delayLabel(id), count })),
+    nlp_bottlenecks: nlpCounts(projects),
+    open_interventions: interventions,
+    precon_blockers,
+    high_forecast: projects.filter((p) => p.insights.forecast?.schedule_risk === "high").map((p) => p.name),
+    projects,
+  };
+}
+
+app.get("/api/reports/flash", authRequired, (req, res) => {
+  const bundle = briefingBundle(req);
+  res.json(flashReportPayload(bundle.projects, bundle));
+});
+
+app.get("/api/reports/qpisr", authRequired, (req, res) => {
+  const bundle = briefingBundle(req);
+  res.json(qpisrPayload(bundle.projects, bundle));
+});
+
+app.get("/api/reports/flash.pdf", authRequired, (req, res) => {
+  const bundle = briefingBundle(req);
+  const payload = flashReportPayload(bundle.projects, bundle);
+  const buf = buildSimplePdf({
+    title: "Pragati — Monthly Flash Report (prototype)",
+    subtitle: `${payload.period} · generated ${payload.generated_at}`,
+    lines: reportLines("MONTHLY FLASH REPORT", payload),
+  });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", "attachment; filename=pragati-flash.pdf");
+  res.send(buf);
+});
+
+app.get("/api/reports/qpisr.pdf", authRequired, (req, res) => {
+  const bundle = briefingBundle(req);
+  const payload = qpisrPayload(bundle.projects, bundle);
+  const buf = buildSimplePdf({
+    title: "Pragati — QPISR-style report (prototype)",
+    subtitle: `${payload.period} · generated ${payload.generated_at}`,
+    lines: reportLines("QPISR-STYLE QUARTERLY STATUS", payload),
+  });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", "attachment; filename=pragati-qpisr.pdf");
+  res.send(buf);
 });
 
 const port = Number(process.env.PORT || 3001);

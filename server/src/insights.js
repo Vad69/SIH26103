@@ -30,6 +30,7 @@ export function financeMetrics(project, now = new Date()) {
   const originalCost = Number(project.original_cost || 0);
   const revisedCost = Number(project.revised_cost || originalCost);
   const expenditure = Number(project.expenditure || 0);
+  const fundsReleased = Number(project.funds_released || 0);
   const originalEnd = project.original_end_date || project.end_date;
   const revisedEnd = project.revised_end_date || project.end_date;
   const costOverrunPct = originalCost > 0 ? ((revisedCost - originalCost) / originalCost) * 100 : 0;
@@ -43,9 +44,15 @@ export function financeMetrics(project, now = new Date()) {
   return {
     original_cost: originalCost,
     revised_cost: revisedCost,
+    sanctioned_cost: originalCost,
+    anticipated_cost: revisedCost,
+    funds_released: fundsReleased,
     expenditure,
     cost_overrun_pct: Math.round(costOverrunPct * 10) / 10,
     financial_progress: clamp(financialProgress),
+    release_utilization: revisedCost > 0 ? clamp((fundsReleased / revisedCost) * 100) : 0,
+    expenditure_utilization: revisedCost > 0 ? clamp((expenditure / revisedCost) * 100) : 0,
+    funding_gap: Math.round(Math.max(0, revisedCost - fundsReleased) * 100) / 100,
     planned_physical: plannedPhysical,
     expected_expenditure: Math.round(expectedExpenditure * 100) / 100,
     expenditure_variance: Math.round((expenditure - expectedExpenditure) * 100) / 100,
@@ -62,7 +69,7 @@ function bandFor(score) {
   return "critical";
 }
 
-export function analyzeProject({ project, tasks = [], milestones = [], issues = [] }, now = new Date()) {
+export function analyzeProject({ project, tasks = [], milestones = [], issues = [], preconstructions = [] }, now = new Date()) {
   const today = todayISO(now);
   const overdue = tasks.filter((t) => t.status !== "done" && t.due_date < today);
   const overdueCritical = overdue.filter((t) => t.priority === "critical");
@@ -79,6 +86,8 @@ export function analyzeProject({ project, tasks = [], milestones = [], issues = 
   const finance = financeMetrics(project, now);
   const elapsed = finance.planned_physical;
   const physicalGap = elapsed - progress;
+  finance.physical_financial_mismatch = finance.financial_progress - progress;
+  const delayedPrecon = preconstructions.filter((c) => c.status === "delayed" || c.status === "blocked");
   const openCriticalIssues = issues.filter((i) => i.status !== "resolved" && i.severity === "critical").length;
   const openIssues = issues.filter((i) => i.status !== "resolved").length;
 
@@ -150,6 +159,24 @@ export function analyzeProject({ project, tasks = [], milestones = [], issues = 
   if (project.delay_reason) {
     reasons.push({ severity: "medium", text: `Recorded delay reason: ${delayLabel(project.delay_reason)}` });
   }
+  if (delayedPrecon.length) {
+    reasons.push({
+      severity: "high",
+      text: `${delayedPrecon.length} pre-construction clearance${delayedPrecon.length === 1 ? " is" : "s are"} delayed or blocked`,
+    });
+  }
+  if (finance.funding_gap >= 20 && finance.revised_cost > 0) {
+    reasons.push({
+      severity: "medium",
+      text: `Funding gap of ₹${finance.funding_gap} Cr (anticipated cost vs funds released)`,
+    });
+  }
+  if (finance.physical_financial_mismatch >= 15) {
+    reasons.push({
+      severity: "medium",
+      text: `Financial progress (${finance.financial_progress}%) is ahead of system-calculated physical progress (${progress}%)`,
+    });
+  }
 
   const alerts = [];
   if (overdueCritical.length) {
@@ -203,7 +230,11 @@ export function analyzeProject({ project, tasks = [], milestones = [], issues = 
   const earlyWarning =
     project.status !== "completed" &&
     band !== "on_track" &&
-    (physicalGap >= 8 || overdueCritical.length >= 1 || finance.cost_overrun_pct >= 10 || openMilestones.length >= 2);
+    (physicalGap >= 8 ||
+      overdueCritical.length >= 1 ||
+      finance.cost_overrun_pct >= 10 ||
+      openMilestones.length >= 2 ||
+      delayedPrecon.length >= 1);
 
   let intervention = "Continue routine monitoring. This engine identifies and prioritizes work; it does not close it.";
   if (band === "critical") {
@@ -233,6 +264,11 @@ export function analyzeProject({ project, tasks = [], milestones = [], issues = 
   }
   if (openMilestones.length >= 2) {
     whatBits.push(`${openMilestones.length} milestones have passed without completion`);
+  }
+  if (delayedPrecon.length >= 1) {
+    whatBits.push(
+      `${delayedPrecon.length} pre-construction item${delayedPrecon.length === 1 ? " is" : "s are"} delayed or blocked`
+    );
   }
   const what = whatBits.join("; ") || reasons[0]?.text || "Slippage indicators have worsened relative to the original plan";
   const reviewBit = overdueCritical.length

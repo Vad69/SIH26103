@@ -112,11 +112,12 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {[
           ["Projects", stats.total],
           ["Original cost", `₹${stats.original_cost} Cr`],
           ["Revised cost", `₹${stats.revised_cost} Cr`],
+          ["Funds released", `₹${stats.funds_released ?? 0} Cr`],
           ["Expenditure", `₹${stats.expenditure} Cr`],
         ].map(([label, value]) => (
           <Card key={label}>
@@ -152,6 +153,30 @@ export default function Dashboard() {
           }}
         />
       ) : null}
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <h3 className="font-medium">Forecast schedule risk (prototype trajectory)</h3>
+          <p className="mt-1 text-xs text-ink/50">Not a trained ML model. Complements current health.</p>
+          <dl className="mt-3 grid grid-cols-3 gap-3 text-sm">
+            <div><dt className="text-ink/50">High</dt><dd className="font-serif text-2xl">{data.forecast_risk?.high ?? 0}</dd></div>
+            <div><dt className="text-ink/50">Medium</dt><dd className="font-serif text-2xl">{data.forecast_risk?.medium ?? 0}</dd></div>
+            <div><dt className="text-ink/50">Low</dt><dd className="font-serif text-2xl">{data.forecast_risk?.low ?? 0}</dd></div>
+          </dl>
+        </Card>
+        <Card>
+          <h3 className="font-medium">Critical in-app alerts</h3>
+          <ul className="mt-3 space-y-2 text-sm">
+            {(data.smart_alerts || []).slice(0, 5).map((a) => (
+              <li key={a.id} className="flex items-start justify-between gap-2">
+                <Link className="hover:underline" to={`/projects/${a.project_id}`}>{a.title}</Link>
+                <StatusPill status={a.severity} />
+              </li>
+            ))}
+            {!data.smart_alerts?.length ? <li className="text-ink/50">None for this filter.</li> : null}
+          </ul>
+        </Card>
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
