@@ -32,6 +32,7 @@ import {
   validateResourcePatch,
   validateTenderStatus,
   isLifecycleStatus,
+  ensureLifecycle,
 } from "./lifecycle.js";
 import { logAudit, listAudit } from "./audit.js";
 import { parseCsv, toCsv } from "./csv.js";
@@ -110,9 +111,22 @@ function intel(project) {
 }
 
 function persistIntel(project, { capture = true, source = "auto" } = {}) {
-  const insights = intel(project);
-  recordHealth(project.id, insights);
-  if (capture) maybeCaptureReview(db, project, insights, source);
+  ensureLifecycle(db, project.id);
+  const fresh = enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(project.id));
+  const insights = intel(fresh);
+  recordHealth(fresh.id, insights);
+  if (capture) maybeCaptureReview(db, fresh, insights, source);
+  syncProjectAlerts(db, {
+    project: fresh,
+    alerts: deriveSmartAlerts({
+      project: fresh,
+      insights,
+      forecast: insights.forecast,
+      preconstructions: fresh.preconstructions || [],
+      lifecycle_stages: fresh.lifecycle_stages || [],
+      resources: fresh.resources || [],
+    }),
+  });
   return insights;
 }
 
@@ -138,23 +152,12 @@ function recordHealth(projectId, insights) {
 
 function loadVisible(user) {
   return visibleProjectIds(user)
-    .map((id) => enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)))
+    .map((id) => {
+      const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(id);
+      return row ? enrichProject(row, { ensure: false }) : null;
+    })
     .filter(Boolean)
-    .map((p) => {
-      const insights = persistIntel(p);
-      syncProjectAlerts(db, {
-        project: p,
-        alerts: deriveSmartAlerts({
-          project: p,
-          insights,
-          forecast: insights.forecast,
-          preconstructions: p.preconstructions || [],
-          lifecycle_stages: p.lifecycle_stages || [],
-          resources: p.resources || [],
-        }),
-      });
-      return { ...p, insights };
-    });
+    .map((p) => ({ ...p, insights: intel(p) }));
 }
 
 function matchesFilters(p, q) {
@@ -560,14 +563,23 @@ app.get("/api/dashboard", authRequired, (req, res) => {
     const fr = p.insights?.forecast?.schedule_risk;
     if (forecastCounts[fr] !== undefined) forecastCounts[fr] += 1;
   }
-  const ids = projects.map((p) => p.id);
-  const smartAlerts = ids.length
-    ? db
-        .prepare(
-          `SELECT * FROM alerts WHERE project_id IN (${ids.map(() => "?").join(",")}) ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END, id DESC LIMIT 20`
-        )
-        .all(...ids)
-    : [];
+  const smartAlerts = projects.flatMap((p) =>
+    deriveSmartAlerts({
+      project: p,
+      insights: p.insights,
+      forecast: p.insights.forecast,
+      preconstructions: p.preconstructions || [],
+      lifecycle_stages: p.lifecycle_stages || [],
+      resources: p.resources || [],
+    }).map((a) => ({
+      ...a,
+      project_id: p.id,
+      project_name: p.name,
+    }))
+  ).sort((a, b) => {
+    const rank = { critical: 0, high: 1, warning: 2, informational: 3 };
+    return (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9);
+  }).slice(0, 20);
 
   const newlyRisk = [];
   const improving = [];
@@ -754,8 +766,8 @@ app.get("/api/projects/:id", authRequired, (req, res) => {
   const row = projectOr404(id, res);
   if (!row) return;
   if (!canAccessProject(req.user, id)) return res.status(403).json({ error: "No access to this project." });
-  const project = enrichProject(row);
-  const insights = persistIntel(project);
+  const project = enrichProject(row, { ensure: false });
+  const insights = intel(project);
   res.json({ ...project, insights, audit: listAudit({ projectId: id, limit: 40 }) });
 });
 
@@ -764,8 +776,8 @@ app.get("/api/projects/:id/what-changed", authRequired, (req, res) => {
   const row = projectOr404(id, res);
   if (!row) return;
   if (!canAccessProject(req.user, id)) return res.status(403).json({ error: "No access to this project." });
-  const project = enrichProject(row);
-  const insights = persistIntel(project);
+  const project = enrichProject(row, { ensure: false });
+  const insights = intel(project);
   res.json(whatChangedForProject(db, project, insights));
 });
 
@@ -785,7 +797,7 @@ app.post("/api/projects/:id/what-if", authRequired, (req, res) => {
   const row = projectOr404(id, res);
   if (!row) return;
   if (!canAccessProject(req.user, id)) return res.status(403).json({ error: "No access to this project." });
-  const project = enrichProject(row);
+  const project = enrichProject(row, { ensure: false });
   const insights = intel(project);
   const before = JSON.stringify({ resources: project.resources, tasks: project.tasks });
   try {
@@ -804,8 +816,8 @@ app.get("/api/projects/:id/decision-timeline", authRequired, (req, res) => {
   const row = projectOr404(id, res);
   if (!row) return;
   if (!canAccessProject(req.user, id)) return res.status(403).json({ error: "No access to this project." });
-  const project = enrichProject(row);
-  const insights = persistIntel(project);
+  const project = enrichProject(row, { ensure: false });
+  const insights = intel(project);
   const reviewsAsc = listReviews(db, id).slice().reverse();
   const events = buildDecisionTimeline(
     project,
@@ -1061,7 +1073,10 @@ app.put("/api/tasks/:id", authRequired, requireRole("admin", "project_manager"),
 
 app.get("/api/reports", authRequired, (req, res) => {
   const ids = visibleProjectIds(req.user);
-  const projects = ids.map((id) => enrichProject(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)));
+  const projects = ids.map((id) => {
+    const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(id);
+    return row ? enrichProject(row, { ensure: false }) : null;
+  }).filter(Boolean);
   const delayed = [];
   const byStatus = { planning: 0, active: 0, delayed: 0, completed: 0, on_hold: 0 };
   const completion = { done: 0, open: 0 };
@@ -1508,16 +1523,44 @@ app.post("/api/nlp/classify", authRequired, (req, res) => {
 });
 
 app.get("/api/alerts", authRequired, (req, res) => {
-  loadVisible(req.user);
-  const ids = visibleProjectIds(req.user);
-  if (!ids.length) return res.json([]);
-  const rows = db
-    .prepare(
-      `SELECT a.*, p.name AS project_name FROM alerts a JOIN projects p ON p.id = a.project_id
-       WHERE a.project_id IN (${ids.map(() => "?").join(",")})
-       ORDER BY CASE a.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END, a.id DESC`
-    )
-    .all(...ids);
+  const projects = loadVisible(req.user);
+  const ids = projects.map((p) => p.id);
+  const stored = ids.length
+    ? db
+        .prepare(`SELECT * FROM alerts WHERE project_id IN (${ids.map(() => "?").join(",")})`)
+        .all(...ids)
+    : [];
+  const byKey = {};
+  for (const row of stored) {
+    byKey[`${row.project_id}:${row.code}`] = row;
+  }
+  const rank = { critical: 0, high: 1, warning: 2, informational: 3 };
+  const rows = [];
+  for (const p of projects) {
+    const alerts = deriveSmartAlerts({
+      project: p,
+      insights: p.insights,
+      forecast: p.insights.forecast,
+      preconstructions: p.preconstructions || [],
+      lifecycle_stages: p.lifecycle_stages || [],
+      resources: p.resources || [],
+    });
+    for (const a of alerts) {
+      const prev = byKey[`${p.id}:${a.code}`];
+      rows.push({
+        id: prev?.id ?? null,
+        project_id: p.id,
+        project_name: p.name,
+        code: a.code,
+        severity: a.severity,
+        title: a.title,
+        explanation: a.explanation,
+        created_at: prev?.created_at ?? null,
+        read_at: prev?.read_at ?? null,
+      });
+    }
+  }
+  rows.sort((a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9));
   res.json(rows);
 });
 

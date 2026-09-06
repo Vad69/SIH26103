@@ -26,19 +26,21 @@ export default function Alerts() {
         </p>
       </div>
       {rows.map((a) => (
-        <Card key={a.id} className="flex flex-wrap items-start justify-between gap-3">
+        <Card key={`${a.project_id}-${a.code}-${a.id ?? "live"}`} className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <Link className="font-medium hover:underline" to={`/projects/${a.project_id}`}>
               {a.title}
             </Link>
             <p className="mt-1 text-sm text-ink/70">{a.explanation}</p>
-            <p className="mt-1 text-xs text-ink/40">{new Date(a.created_at).toLocaleString()}</p>
+            <p className="mt-1 text-xs text-ink/40">
+              {a.created_at ? new Date(a.created_at).toLocaleString() : "Live calculation — not stored until an officer writes the project"}
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <StatusPill status={a.severity} />
             {a.read_at ? (
               <span className="text-xs text-ink/40">Read</span>
-            ) : (
+            ) : a.id ? (
               <button
                 className="text-sm text-navy hover:underline"
                 type="button"
@@ -46,7 +48,7 @@ export default function Alerts() {
               >
                 Mark read
               </button>
-            )}
+            ) : null}
           </div>
         </Card>
       ))}
