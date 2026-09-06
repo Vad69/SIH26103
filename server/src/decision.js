@@ -83,8 +83,8 @@ export function captureState(project, insights) {
     clearances,
     commencement_delay_days: insights?.commencement_delay_days ?? project.commencement_delay_days ?? null,
     current_stage: outlook.current_stage || project.current_stage || null,
-    bottleneck: outlook.bottleneck?.label || null,
-    top_reason: outlook.why?.[0] || health.reasons?.[0]?.text || null,
+    bottleneck: outlook.primary_driver?.label || health.reasons?.[0]?.text || null,
+    top_reason: health.reasons?.[0]?.text || outlook.why?.[0] || null,
     recommended_action: outlook.recommended_action || health.intervention || null,
     open_alerts: (insights?.alerts || []).filter((a) => a.severity === "high" || a.severity === "medium").length,
     tender_status: project.tender_status || null,
@@ -865,7 +865,7 @@ export function buildDecisionBoard(rows) {
     if (p.bottleneck) bottleneckCounts[p.bottleneck] = (bottleneckCounts[p.bottleneck] || 0) + 1;
   }
   const topBottleneck = Object.entries(bottleneckCounts).sort((a, b) => b[1] - a[1])[0];
-  if (topBottleneck) insights.push(`Highest-risk bottleneck among attention projects: ${topBottleneck[0]}.`);
+  if (topBottleneck) insights.push(`Highest-risk primary driver among attention projects: ${topBottleneck[0]}.`);
   const urgent = grouped.immediate[0];
   if (urgent?.recommended_action) insights.push(`Most urgent recommended action: ${urgent.recommended_action}`);
 
@@ -918,14 +918,19 @@ export function boardRowsFromProjects(db, projects) {
       trend: trendFromDelta(changed.health_delta),
       forecast_slippage_days: insights.forecast?.estimated_slippage_days,
       forecast_risk: insights.forecast?.schedule_risk || null,
-      bottleneck: insights.outlook?.bottleneck?.label || changed.primary_driver?.label || null,
+      bottleneck:
+        insights.outlook?.primary_driver?.label ||
+        changed.primary_driver?.label ||
+        insights.health?.reasons?.[0]?.text ||
+        null,
+      nlp_suggestion: insights.outlook?.nlp_suggestion || null,
       recent_change: recent
         ? `${recent.label || recent.field}: ${Array.isArray(recent.from) ? recent.from.join(", ") : recent.from} → ${Array.isArray(recent.to) ? recent.to.join(", ") : recent.to}`
         : changed.available
           ? "No material change since the last distinct review"
           : "No previous review is available for comparison.",
       recommended_action: rec?.action || insights.outlook?.recommended_action,
-      primary_driver: changed.primary_driver,
+      primary_driver: changed.primary_driver || insights.outlook?.primary_driver || null,
       health_delta: changed.health_delta,
       priority_reason: priorityReason(changed),
       driver_kind: changed.driver_kind,

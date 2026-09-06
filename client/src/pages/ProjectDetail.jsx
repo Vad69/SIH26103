@@ -506,7 +506,7 @@ export default function ProjectDetail() {
         <div className="space-y-4">
           <Card>
             <p className="text-xs uppercase text-ink/50">Project outlook</p>
-            <p className="mt-1 text-xs text-ink/50">Single executive summary from canonical project data. Health is rule-based; forecast is a prototype trajectory.</p>
+            <p className="mt-1 text-xs text-ink/50">Single executive summary from canonical project data. Health is rule-based; forecast is a prototype trajectory. NLP is an advisory signal only.</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
               <div><p className="text-ink/50">Current stage</p><p className="font-medium">{project.insights?.outlook?.current_stage_label || project.current_stage_label || "—"}</p></div>
               <div><p className="text-ink/50">Health</p><StatusPill status={project.insights?.outlook?.current_health} /></div>
@@ -519,16 +519,25 @@ export default function ProjectDetail() {
             </div>
             <p className="mt-3 text-sm">Estimated completion: {project.insights?.forecast?.estimated_completion} · forecast risk {project.insights?.forecast?.schedule_risk}</p>
             <p className="mt-1 text-xs text-ink/50">{project.insights?.forecast?.method_note}</p>
+            {project.insights?.outlook?.primary_driver ? (
+              <div className="mt-4 rounded-lg bg-paper p-3 text-sm">
+                <p className="text-xs uppercase text-ink/50">Primary risk driver</p>
+                <p className="mt-1 font-medium">{project.insights.outlook.primary_driver.label}</p>
+                <p className="mt-1 text-xs text-ink/60">{project.insights.outlook.primary_driver.text}</p>
+                <p className="mt-1 text-xs text-ink/45">Observed / rule-based health evidence — not NLP.</p>
+              </div>
+            ) : null}
             <h3 className="mt-4 font-medium">Why at risk</h3>
             <ul className="mt-2 list-disc pl-5 text-sm">
               {(project.insights?.outlook?.why || []).map((w) => <li key={w}>{w}</li>)}
             </ul>
-            {project.insights?.outlook?.bottleneck ? (
-              <div className="mt-4 rounded-lg bg-paper p-3 text-sm">
-                <p className="font-medium">Prototype NLP bottleneck (synthetic phrases — suggestion only)</p>
-                <p>{project.insights.outlook.bottleneck.label} · confidence {project.insights.outlook.bottleneck.confidence_band}
-                  {project.insights.outlook.bottleneck.confidence != null ? ` (${Math.round(project.insights.outlook.bottleneck.confidence * 100)}%)` : ""}</p>
-                <p className="mt-1 text-xs text-ink/60">{project.insights.outlook.bottleneck.explanation}</p>
+            {project.insights?.outlook?.nlp_suggestion ? (
+              <div className="mt-4 rounded-lg border border-sand p-3 text-sm">
+                <p className="font-medium">NLP-assisted bottleneck suggestion</p>
+                <p className="text-xs text-ink/50">Advisory signal — does not set health score, band, or the primary driver</p>
+                <p className="mt-1">{project.insights.outlook.nlp_suggestion.label} · confidence {project.insights.outlook.nlp_suggestion.confidence_band}
+                  {project.insights.outlook.nlp_suggestion.confidence != null ? ` (${Math.round(project.insights.outlook.nlp_suggestion.confidence * 100)}%)` : ""}</p>
+                <p className="mt-1 text-xs text-ink/60">{project.insights.outlook.nlp_suggestion.explanation}</p>
               </div>
             ) : null}
             {project.insights?.outlook?.open_intervention ? (
@@ -1079,8 +1088,8 @@ export default function ProjectDetail() {
                 <p className="mt-1 text-sm">{issue.intervention}</p>
                 {issue.suggested_category ? (
                   <p className="mt-2 text-xs text-ink/55">
-                    NLP suggestion: {issue.suggested_category} ({issue.nlp_confidence != null ? Math.round(issue.nlp_confidence * 100) : "—"}%)
-                    {issue.nlp_accepted_category ? ` · accepted as ${issue.nlp_accepted_category}` : " · not applied until accepted"}
+                    NLP-assisted suggestion: {issue.suggested_category} ({issue.nlp_confidence != null ? Math.round(issue.nlp_confidence * 100) : "—"}%)
+                    {issue.nlp_accepted_category ? ` · accepted as ${issue.nlp_accepted_category}` : " · advisory until an officer accepts it"}
                     {canManage && issue.suggested_category !== issue.category ? (
                       <button
                         className="ml-2 text-navy underline"
