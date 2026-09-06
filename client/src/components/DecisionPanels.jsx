@@ -150,9 +150,9 @@ export function WhatChangedPanel({ data, loading, error, onRetry }) {
 
 export function WhatIfPanel({ projectId, canRun, onError }) {
   const [form, setForm] = useState({
-    resource_category: "materials",
+    resource_category: "site_readiness",
     resolve_in_days: "7",
-    weekly_progress_pct: "",
+    weekly_progress_pct: "8",
   });
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -179,28 +179,38 @@ export function WhatIfPanel({ projectId, canRun, onError }) {
   const cat = form.resource_category;
   const currentRes = result?.current?.resources?.find((r) => r.category === cat);
   const scenarioRes = result?.scenario?.resources?.find((r) => r.category === cat);
+  const factorKeys = [
+    ["schedule", "Schedule"],
+    ["physical_progress", "Physical"],
+    ["financial_progress", "Finance"],
+    ["milestones", "Milestones"],
+    ["critical_tasks", "Critical tasks"],
+  ];
 
   return (
     <Card>
       <p className="text-xs uppercase text-ink/50">What-if analysis</p>
       <h3 className="font-medium mt-1">Scenario simulation</h3>
       <p className="mt-1 text-xs text-ink/50">
-        Scenario only. The live project is not modified. Uses the same health and forecast rules as monitoring — not a guaranteed prediction.
+        Current = live project. Scenario = temporary recalculation with the same five-factor health rules and prototype forecast. Nothing is saved.
+      </p>
+      <p className="mt-1 text-xs text-ink/50">
+        Default officer week: restore the selected constraint (site readiness is the usual PLFS bottleneck) and a modest +8 physical-progress points — not a guaranteed recovery.
       </p>
       <form className="mt-3 grid gap-3 md:grid-cols-3" onSubmit={run}>
-        <Field label="Resource">
+        <Field label="Resource to restore">
           <select className={inputClass} value={form.resource_category} onChange={(e) => setForm({ ...form, resource_category: e.target.value })}>
+            <option value="site_readiness">Site readiness</option>
             <option value="materials">Materials</option>
             <option value="equipment">Equipment</option>
             <option value="human_resources">Human resources</option>
             <option value="logistics">Logistics</option>
-            <option value="site_readiness">Site readiness</option>
           </select>
         </Field>
         <Field label="Restored within (days)">
           <input className={inputClass} type="number" min="0" value={form.resolve_in_days} onChange={(e) => setForm({ ...form, resolve_in_days: e.target.value })} />
         </Field>
-        <Field label="Physical progress +% / week (optional)">
+        <Field label="Physical progress +% / week">
           <input className={inputClass} type="number" value={form.weekly_progress_pct} onChange={(e) => setForm({ ...form, weekly_progress_pct: e.target.value })} />
         </Field>
         <button className="rounded-md bg-navy px-4 py-2 text-sm text-white md:col-span-3 disabled:opacity-50" type="submit" disabled={!canRun || busy}>
@@ -210,18 +220,20 @@ export function WhatIfPanel({ projectId, canRun, onError }) {
       {localError ? <p className="mt-2 text-sm text-accent">{localError}</p> : null}
       {result ? (
         <div className="mt-4 space-y-3">
-          <p className="rounded-md bg-paper px-3 py-2 text-xs font-medium">Scenario only. The live project is not modified.</p>
+          <p className="rounded-md bg-paper px-3 py-2 text-xs font-medium">
+            Simulated only. Live health, tasks, resources and interventions are unchanged.
+          </p>
           <div className="grid gap-4 sm:grid-cols-2 text-sm">
             <div className="rounded-lg border border-sand p-3">
-              <p className="text-xs uppercase text-ink/50">Current state</p>
+              <p className="text-xs uppercase text-ink/50">Current (live)</p>
               <p className="mt-2">Health {result.current.health_score} · {String(result.current.health_band || "").replaceAll("_", " ")}</p>
-              <p>Material / selected readiness: <strong>{currentRes?.status || "—"}</strong></p>
+              <p>Selected readiness: <strong>{currentRes?.status || "—"}</strong></p>
               <p>Projected delay: <strong>{result.current.forecast_slippage_days} days</strong> <span className="text-ink/45">(forecast)</span></p>
               <p>Estimated completion: {result.current.forecast_finish || "—"}</p>
               <p>Physical progress: {result.current.physical_progress}%</p>
             </div>
             <div className="rounded-lg border border-navy/20 bg-navy/5 p-3">
-              <p className="text-xs uppercase text-ink/50">Scenario</p>
+              <p className="text-xs uppercase text-ink/50">Scenario (not saved)</p>
               <p className="mt-2">Health {result.scenario.health_score} · {String(result.scenario.health_band || "").replaceAll("_", " ")}</p>
               <p>Selected readiness: <strong>{scenarioRes?.status || "—"}</strong></p>
               <p>Projected delay: <strong>{result.scenario.forecast_slippage_days} days</strong></p>
@@ -229,11 +241,33 @@ export function WhatIfPanel({ projectId, canRun, onError }) {
               <p>Physical progress: {result.scenario.physical_progress}%</p>
               <p className="mt-2 font-medium">
                 Scenario difference: {result.delta.expected_recovery_days} days
-                {result.delta.health_score ? ` · health ${result.delta.health_score > 0 ? "+" : ""}${result.delta.health_score}` : ""}
+                {result.delta.health_score ? ` · health ${result.delta.health_score > 0 ? "+" : ""}${result.delta.health_score}` : " · composite health unchanged"}
                 <span className="font-normal text-ink/50"> (scenario only, not a guaranteed outcome)</span>
               </p>
             </div>
           </div>
+          <div>
+            <p className="text-xs uppercase text-ink/50">Five-factor scores (same engine)</p>
+            <div className="mt-2 grid gap-2 sm:grid-cols-5 text-xs">
+              {factorKeys.map(([key, label]) => {
+                const from = result.current?.factors?.[key];
+                const to = result.scenario?.factors?.[key];
+                const floor = from === 0 && to === 0;
+                return (
+                  <div key={key} className="rounded-lg border border-sand px-2 py-2">
+                    <p className="text-ink/50">{label}</p>
+                    <p className="font-medium">{from ?? "—"} → {to ?? "—"}</p>
+                    {floor ? <p className="text-ink/45">At floor</p> : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          {(result.recalc?.notes || []).length ? (
+            <ul className="list-disc pl-5 text-xs text-ink/65">
+              {result.recalc.notes.map((n) => <li key={n}>{n}</li>)}
+            </ul>
+          ) : null}
           <div>
             <p className="text-xs uppercase text-ink/50">Assumptions</p>
             <ul className="mt-1 list-disc pl-5 text-xs text-ink/65">

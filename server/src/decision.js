@@ -555,10 +555,20 @@ export function simulateScenario(project, insights, scenario) {
     assumptions.push(`Each task's recorded progress is shifted by ${scenario.progress_delta} percentage point(s).`);
   }
 
+  const currentFactors = insights?.health?.factors || {};
+  const recalc = describeSimulationRecalc(currentFactors, health.factors, {
+    health_from: insights?.health?.score,
+    health_to: health.score,
+    health_delta: round1(health.score - num(insights?.health?.score)),
+    forecast_delta: scenarioSlip - currentSlip,
+    physical_delta: analyzed.progress - num(insights?.progress),
+  });
+
   return {
     kind: "scenario_simulation",
     scenario_only: true,
     assumptions,
+    recalc,
     disclaimer:
       "Deterministic simulation using the same five-factor health rules and prototype forecast as live monitoring. Not a guaranteed real-world prediction. The live project is not modified.",
     current: {
@@ -569,6 +579,7 @@ export function simulateScenario(project, insights, scenario) {
       forecast_finish: insights?.forecast?.estimated_completion,
       forecast_risk: insights?.forecast?.schedule_risk,
       resources: (project.resources || []).map((r) => ({ category: r.category, status: r.status })),
+      factors: currentFactors,
     },
     scenario: {
       inputs: scenario || {},
@@ -588,6 +599,56 @@ export function simulateScenario(project, insights, scenario) {
       physical_progress: analyzed.progress - num(insights?.progress),
     },
     changed_factors: changedFactors,
+  };
+}
+
+const FACTOR_LABELS = {
+  schedule: "Schedule",
+  physical_progress: "Physical progress",
+  financial_progress: "Finance",
+  milestones: "Milestones",
+  critical_tasks: "Critical tasks",
+};
+
+export function describeSimulationRecalc(currentFactors, scenarioFactors, delta) {
+  const floor_factors = [];
+  const moved_factors = [];
+  for (const [key, label] of Object.entries(FACTOR_LABELS)) {
+    const from = currentFactors?.[key];
+    const to = scenarioFactors?.[key];
+    if (from == null || to == null) continue;
+    if (from !== to) moved_factors.push({ key, label, from, to });
+    else if (Number(from) === 0 && Number(to) === 0) floor_factors.push({ key, label, from, to });
+  }
+  const notes = [
+    "Health and forecast were recalculated with the same rule-based engines used for live monitoring.",
+    "Scenario only — nothing is written to the project, tasks, resources, or interventions.",
+  ];
+  const healthDelta = Number(delta?.health_delta) || 0;
+  if (healthDelta === 0) {
+    if (floor_factors.length) {
+      notes.push(
+        `Composite health stayed ${delta.health_from} because ${floor_factors.map((f) => f.label).join(", ")} ${
+          floor_factors.length === 1 ? "is" : "are"
+        } already at the floor (0/100). Changing one readiness item cannot raise a floored factor until the underlying tasks, milestones, or schedule gap also move.`
+      );
+    } else {
+      notes.push(`Composite health stayed ${delta.health_from}. Forecast and readiness were still recalculated under the same rules.`);
+    }
+  } else {
+    notes.push(
+      `Composite health moved ${delta.health_from} → ${delta.health_to} because the existing five-factor rules were applied to the scenario inputs — not a hardcoded recovery.`
+    );
+    if (floor_factors.length) {
+      notes.push(`Still at floor (0/100): ${floor_factors.map((f) => f.label).join(", ")}.`);
+    }
+  }
+  return {
+    engines: ["rule_based_health", "prototype_trajectory"],
+    composite_health_unchanged: healthDelta === 0,
+    floor_factors,
+    moved_factors,
+    notes,
   };
 }
 
