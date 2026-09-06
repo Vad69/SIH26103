@@ -54,7 +54,8 @@ export default function ExecutiveReports({ kind }) {
         <p className="mt-2 text-sm">High forecast schedule risk: {(data.high_forecast || []).join(", ") || "None"}</p>
       </Card>
       <Card>
-        <h3 className="font-medium">Delay / NLP-assisted bottleneck counts</h3>
+        <h3 className="font-medium">Issue / NLP-assisted category counts</h3>
+        <p className="mt-1 text-xs text-ink/50">Officer-coded or accepted NLP categories. Advisory portfolio counts — not the health-score driver.</p>
         <ul className="mt-2 text-sm">
           {(data.nlp_bottlenecks || data.major_delay_reasons || []).map((r) => (
             <li key={r.id || r.label}>{r.label}: {r.count}</li>

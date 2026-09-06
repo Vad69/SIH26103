@@ -77,7 +77,8 @@ export function qpisrPayload(projects, extras) {
         precon_blocked: precon.filter((c) => c.status === "delayed" || c.status === "blocked").map((c) => c.name),
         issues: (p.issues || []).filter((i) => i.status !== "resolved").map((i) => i.title),
         interventions: (p.interventions || []).filter((i) => i.status !== "resolved" && i.status !== "cancelled").map((i) => i.action),
-        bottleneck: p.insights?.outlook?.bottleneck?.label || delayLabel(p.delay_reason),
+        bottleneck: p.insights?.outlook?.primary_driver?.label || delayLabel(p.delay_reason),
+        nlp_suggestion: p.insights?.outlook?.nlp_suggestion?.label || null,
         lifecycle_stage: p.current_stage_label || p.insights?.outlook?.current_stage_label || "",
         resource_blocked: (p.resources || [])
           .filter((r) => r.status === "delayed" || r.status === "blocked")
@@ -110,7 +111,7 @@ export function reportLines(kind, payload) {
     `Improving: ${(payload.improving || []).join("; ") || "None"}`,
     `Deteriorating: ${(payload.deteriorating || []).join("; ") || "None"}`,
     "",
-    "Major delay / NLP-assisted bottleneck counts:",
+    "Issue / NLP-assisted category counts (advisory; not the health-score driver):",
     ...(payload.nlp_bottlenecks || payload.major_delay_reasons || []).slice(0, 8).map((r) => `- ${r.label}: ${r.count}`),
     "",
     "Projects:",

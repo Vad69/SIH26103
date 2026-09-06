@@ -150,7 +150,16 @@ export default function DecisionBoard() {
                   </div>
                   <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
                     <div><dt className="text-ink/50">Priority reason</dt><dd>{p.priority_reason || "—"}</dd></div>
-                    <div><dt className="text-ink/50">Primary issue</dt><dd>{p.bottleneck || p.primary_driver?.label || "—"}</dd></div>
+                    <div><dt className="text-ink/50">Primary risk driver</dt><dd>{p.bottleneck || p.primary_driver?.label || "—"}</dd></div>
+                    {p.nlp_suggestion?.label ? (
+                      <div>
+                        <dt className="text-ink/50">NLP-assisted suggestion</dt>
+                        <dd>
+                          {p.nlp_suggestion.label}
+                          <span className="block text-xs text-ink/45">Advisory signal — not the health driver</span>
+                        </dd>
+                      </div>
+                    ) : null}
                     <div><dt className="text-ink/50">Recent change</dt><dd>{p.recent_change}</dd></div>
                     <div><dt className="text-ink/50">Recommended action</dt><dd>{p.recommended_action}</dd></div>
                   </dl>

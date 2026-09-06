@@ -243,6 +243,7 @@ export default function Dashboard() {
         </Card>
         <Card>
           <h3 className="font-medium">Top delay reasons</h3>
+          <p className="mt-1 text-xs text-ink/50">Officer-recorded coded reasons. Not an NLP classification.</p>
           {data.delay_reasons?.length ? (
             <div className="mt-4 h-56">
               <Bar data={delayBar} options={{ maintainAspectRatio: false, plugins: { legend: { display: false } }, indexAxis: "y" }} />
