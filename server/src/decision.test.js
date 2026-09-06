@@ -17,6 +17,8 @@ import {
   driverKind,
   priorityReason,
   eventLane,
+  describeSimulationRecalc,
+  intelInput,
 } from "./decision.js";
 import { analyzeProject } from "./insights.js";
 import { forecastProject } from "./forecast.js";
@@ -351,4 +353,51 @@ test("why-it-matters and empty comparison copy", () => {
   assert.match(whyItMatters(null), /No review-to-review/i);
   const reason = priorityReason({ available: false, changes: [] });
   assert.match(reason, /No previous review/i);
+});
+
+test("what-if scenario health matches analyzeProject on the cloned inputs", () => {
+  const { project, insights } = sampleBundle();
+  const scenario = { resource_category: "site_readiness", resolve_in_days: 7, weekly_progress_pct: 8 };
+  const snapshot = JSON.stringify({ resources: project.resources, tasks: project.tasks });
+  const result = simulateScenario(project, insights, scenario);
+  assert.equal(JSON.stringify({ resources: project.resources, tasks: project.tasks }), snapshot);
+  const clone = JSON.parse(JSON.stringify(project));
+  clone.resources.find((r) => r.category === "site_readiness").status = "ready";
+  for (const t of clone.tasks) {
+    t.progress = Math.max(0, Math.min(100, (t.progress || 0) + 8));
+    if (t.progress >= 100) t.status = "done";
+  }
+  const analyzed = analyzeProject(intelInput(clone));
+  assert.equal(result.scenario.health_score, analyzed.health.score);
+  assert.equal(result.scenario.health_band, analyzed.health.band);
+  assert.deepEqual(result.scenario.factors, analyzed.health.factors);
+  assert.equal(result.scenario_only, true);
+});
+
+test("what-if explains floor when composite health cannot rise from readiness alone", () => {
+  const { project, insights } = sampleBundle();
+  const result = simulateScenario(project, insights, { resource_category: "materials", resolve_in_days: 7 });
+  assert.ok(result.recalc);
+  assert.equal(result.recalc.engines.includes("rule_based_health"), true);
+  if (result.delta.health_score === 0) {
+    assert.equal(result.recalc.composite_health_unchanged, true);
+    assert.ok(result.recalc.notes.some((n) => /floor/i.test(n) || /stayed/i.test(n)));
+  }
+  assert.ok(
+    result.delta.forecast_slippage_days !== 0 ||
+      result.changed_factors.some((f) => f.factor === "resource") ||
+      result.delta.health_score !== 0
+  );
+});
+
+test("describeSimulationRecalc names floored factors without inventing a score", () => {
+  const notes = describeSimulationRecalc(
+    { schedule: 0, physical_progress: 0, financial_progress: 74, milestones: 0, critical_tasks: 0 },
+    { schedule: 0, physical_progress: 0, financial_progress: 74, milestones: 0, critical_tasks: 0 },
+    { health_from: 15, health_to: 15, health_delta: 0 }
+  );
+  assert.equal(notes.composite_health_unchanged, true);
+  assert.ok(notes.floor_factors.some((f) => f.key === "schedule"));
+  assert.ok(notes.notes.some((n) => /floor/i.test(n)));
+  assert.equal(notes.notes.some((n) => /hardcoded/i.test(n) && /recovery/i.test(n)), false);
 });
