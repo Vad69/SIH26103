@@ -39,7 +39,7 @@ export function primaryRiskDriver({
 
   if (blocked.length) {
     const r = blocked[0];
-    const matching = reasons.find((x) => /resource/i.test(x.text));
+    const matching = reasons.find((x) => /resource categor/i.test(x.text));
     return {
       kind: "observed",
       field: "resources",

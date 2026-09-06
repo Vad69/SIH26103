@@ -97,6 +97,7 @@ test("deterministic primary driver stays site readiness when NLP predicts equipm
   assert.match(driver.label, /Site Readiness/i);
   assert.equal(driver.advisory, false);
   assert.equal(driver.source, "deterministic_health_evidence");
+  assert.match(driver.text, /resource categor/i);
   assert.ok(nlp);
   assert.equal(nlp.category, "equipment");
   assert.equal(nlp.advisory, true);
@@ -129,7 +130,7 @@ test("primaryRiskDriver does not call or depend on NLP class", () => {
 
 test("outlook why lists health evidence and not the NLP class as the first explanation", () => {
   const { insights } = disagreeingBundle();
-  assert.ok(insights.outlook.why.some((w) => /resource/i.test(w)));
+  assert.ok(insights.outlook.why.some((w) => /resource categor/i.test(w)));
   assert.equal(
     insights.outlook.why.some((w) => /Equipment|material supply/i.test(w) && /NLP/i.test(w)),
     false
