@@ -375,7 +375,7 @@ export function projectStatusFromDates(project, progress) {
   return "active";
 }
 
-export function enrichProject(project) {
+export function enrichProject(project, { ensure = true } = {}) {
   const tasks = db
     .prepare(
       `SELECT t.*, u.name AS assignee_name
@@ -401,9 +401,8 @@ export function enrichProject(project) {
   const preconstructions = db
     .prepare("SELECT * FROM preconstructions WHERE project_id = ? ORDER BY planned_completion")
     .all(project.id);
-  ensureLifecycle(db, project.id);
-  const lifecycle_stages = listLifecycle(db, project.id);
-  const resources = listResources(db, project.id);
+  const lifecycle_stages = listLifecycle(db, project.id, { ensure });
+  const resources = listResources(db, project.id, { ensure });
   const progress = taskProgress(tasks);
   const delayedTasks = tasks.filter((t) => isOverdue(t.due_date, t.status === "done"));
   const computedStatus = projectStatusFromDates(project, progress);

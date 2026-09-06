@@ -107,15 +107,15 @@ export function ensureLifecycle(db, projectId) {
   }
 }
 
-export function listLifecycle(db, projectId) {
-  ensureLifecycle(db, projectId);
+export function listLifecycle(db, projectId, { ensure = true } = {}) {
+  if (ensure) ensureLifecycle(db, projectId);
   return db
     .prepare("SELECT * FROM lifecycle_stages WHERE project_id = ? ORDER BY sort_order")
     .all(projectId);
 }
 
-export function listResources(db, projectId) {
-  ensureLifecycle(db, projectId);
+export function listResources(db, projectId, { ensure = true } = {}) {
+  if (ensure) ensureLifecycle(db, projectId);
   return db.prepare("SELECT * FROM resource_readiness WHERE project_id = ?").all(projectId);
 }
 
